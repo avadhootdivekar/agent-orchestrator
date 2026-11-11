@@ -67,8 +67,9 @@ harbor view /var/tmp/ao-harbor/jobs        # browse trajectories
   (no LLM spend).
 - `--subject` picks the ao subject; pass the same one to both arms (the plain arm uses its
   wrapper prompt too).
-- The ao arm builds a wheel from this checkout (`wheels/<sha>/`); a dirty `src/` gets a fresh,
-  dirty-stamped build. Benchmark from a clean, committed tree.
+- The ao arm builds a wheel per commit (`wheels/<sha>/`) from a clean `git archive` export of
+  `AO_WHEEL_REF` (default `HEAD`), so uncommitted edits, yours or an ao run's in the same
+  checkout, never reach the ao under test. Pin `AO_WHEEL_REF=<sha>` for every arm of a campaign.
 - `-- <args>` passes extra flags to `harbor run` (e.g. `--agent-timeout-multiplier 2`).
 
 ### Datasets checked on this host (2026-11-11)
@@ -109,7 +110,7 @@ something should help one arm, it goes into the shared parity layer so it helps 
 | Sessions | plain: one `claude -p` session. ao: many sessions (intake, waves of units, checkpoints, final verify, closeout) |
 | ao's orchestration instructions | overseer contract, stage instructions, role prompt templates (`agents.json`): ao's method |
 | Per-session turn caps | plain: none. ao: per-unit turn budgets (`medium` 30 / `high` 60) from the template |
-| Git | ao's `init_git` commits the repo and adds a local bare `origin` (outside the repo) for its branch-off stage |
+| Git | none in either arm: the shared wrapper prompt says local workspace-only mode, no git changes. The ao subject has `init_git: false` and a `branch_policy` telling overseer-runner's (LLM) git-branch-off stage to write its go-ahead without git; ao still spends one short session on that stage (deterministic no-git mode: T-Ng1Wsp) |
 
 
 Verify parity on every pilot before reading scores: `ao-bench harbor-parity <cc-job> <ao-job>`

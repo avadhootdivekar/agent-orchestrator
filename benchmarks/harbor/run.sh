@@ -158,16 +158,20 @@ case "$arm" in
     args+=(-a ao_harbor.agent:CcAgent --ak "prompt_template_path=$template")
     ;;
   ao)
-    # One wheel per checkout commit; a dirty tree gets a fresh build every time.
-    sha="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+    # One wheel per commit (AO_WHEEL_REF, default HEAD), built from a clean `git archive`
+    # export of that commit: uncommitted edits (yours, or an ao run working in this same
+    # checkout) never leak into the ao under test.
+    sha="$(git -C "$REPO_ROOT" rev-parse --short "${AO_WHEEL_REF:-HEAD}")"
     if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- src pyproject.toml)" ]; then
-      sha="$sha-dirty-$(date +%s)"
-      echo "run.sh: WARNING: src/ has uncommitted changes; the wheel is stamped dirty" >&2
+      echo "run.sh: NOTE: src/ has uncommitted changes; they are NOT in the wheel (built from $sha)" >&2
     fi
     wheel_dir="$AO_HARBOR_ROOT/wheels/$sha"
     wheel="$(ls "$wheel_dir"/agent_orchestrator-*.whl 2>/dev/null | tail -1 || true)"
     if [ -z "$wheel" ] && [ "$dry_run" = 0 ]; then
-      uv build --wheel --out-dir "$wheel_dir" "$REPO_ROOT" >/dev/null
+      export_dir="$(mktemp -d "$AO_HARBOR_ROOT/wheels/src-$sha.XXXX")"
+      git -C "$REPO_ROOT" archive "$sha" | tar -x -C "$export_dir"
+      uv build --wheel --out-dir "$wheel_dir" "$export_dir" >/dev/null
+      rm -rf "$export_dir"
       wheel="$(ls "$wheel_dir"/agent_orchestrator-*.whl | tail -1)"
     fi
     args+=(-a ao_harbor.agent:AoAgent --ak "ao_subject=$subject")

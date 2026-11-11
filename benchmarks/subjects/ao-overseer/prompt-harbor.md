@@ -8,7 +8,9 @@
 
 ## Constraints
 - Work only inside the repo and the paths the task instruction names.
-- The final state must be in the repo's working tree when the run ends (no unmerged branch
+- Local workspace-only mode: make NO git changes (no git init, branch, commit, push, stash or
+  reset). If the directory is not a git repo, leave it that way; just edit files in place.
+- The final state must be in the working tree when the run ends (no unmerged branch
   holding the only copy of the work).
 
 ## Out of scope

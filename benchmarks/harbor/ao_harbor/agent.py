@@ -44,12 +44,21 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SUBJECTS_DIR = REPO_ROOT / "benchmarks" / "subjects"
 PARITY_CLAUDE_DIR = REPO_ROOT / "benchmarks" / "harbor" / "parity" / "claude"
 DEFAULT_SUBJECT = SUBJECTS_DIR / "ao-overseer-harbor.json"
+# `ao-bench` validates subjects against benchmarks/schemas/, which the wheel does not package
+# (bench/spec.py resolves it four `.parent` hops above its own file); install() uploads it there.
+BENCH_SCHEMAS_DIR = REPO_ROOT / "benchmarks" / "schemas"
+SCHEMAS_DIR_PROBE = "from agent_orchestrator.bench import spec; print(spec._SCHEMAS_DIR)"
 
 # Container-side layout. /installed-agent is Harbor's own install dir for agents.
 REMOTE_ROOT = PurePosixPath("/installed-agent/ao")
 REMOTE_SUBJECTS = REMOTE_ROOT / "subjects"
 REMOTE_INSTRUCTION = REMOTE_ROOT / "instruction.md"
-REMOTE_WORKSPACE = PurePosixPath("/tmp/ao-harbor-ws")  # outside the repo under test
+REMOTE_WORKSPACE = PurePosixPath("/ao-ws")
+# ao confines every repo to its workspace root (artifacts.LocalFsArtifactStore.resolve, after
+# symlink resolution), and "/" cannot be a workspace root. So for the run the task's working
+# dir (e.g. /app) is MOVED to REMOTE_REPO and a symlink is left at its original path, so the
+# instruction's absolute paths keep working; run() moves it back before the verifier runs.
+REMOTE_REPO = REMOTE_WORKSPACE / "repo"
 # Interpreter the overseer-runner hooks call (`python_bin` in the harbor subject): the ao
 # tool venv's own Python (>= 3.11), whatever the task image ships.
 AO_PYTHON_LINK = "/usr/local/bin/ao-python"
@@ -235,6 +244,13 @@ class AoAgent(CcAgent):
             environment,
             command=f"ln -sf {shlex.quote(python_path)} {AO_PYTHON_LINK} && {AO_PYTHON_LINK} -V",
         )
+        probe = await self.exec_as_agent(
+            environment,
+            command=f"{shlex.quote(python_path)} -c {shlex.quote(SCHEMAS_DIR_PROBE)}",
+        )
+        remote_schemas = (probe.stdout or "").strip().splitlines()[-1]
+        await self.exec_as_root(environment, command=f"mkdir -p {shlex.quote(remote_schemas)}")
+        await environment.upload_dir(BENCH_SCHEMAS_DIR, remote_schemas)
 
     async def _repo_dir(self, environment: BaseEnvironment) -> str:
         configured = getattr(self.options, "repo_dir", None)
@@ -278,7 +294,7 @@ class AoAgent(CcAgent):
         argv = [
             "ao-bench", "exec-subject",
             "--subject", subject.as_posix(),
-            "--repo-dir", repo_dir,
+            "--repo-dir", REMOTE_REPO.as_posix(),
             "--instruction-file", REMOTE_INSTRUCTION.as_posix(),
             "--workspace", REMOTE_WORKSPACE.as_posix(),
             "--out", (logs / USAGE_FILE).as_posix(),
@@ -295,6 +311,14 @@ class AoAgent(CcAgent):
             # arm's single session gets from `claude --max-budget-usd` (same --ak value).
             argv += ["--param", f"{RUN_BUDGET_PARAM}={self.options.max_budget_usd}"]
         await self._upload_parity_bundle(environment)
+        repo_q, ws_repo_q = shlex.quote(repo_dir), shlex.quote(REMOTE_REPO.as_posix())
+        await self.exec_as_root(
+            environment,
+            command=(
+                f"set -e; mkdir -p {shlex.quote(REMOTE_WORKSPACE.as_posix())}; "
+                f"mv {repo_q} {ws_repo_q} && ln -s {ws_repo_q} {repo_q}"
+            ),
+        )
         try:
             await self.exec_as_agent(
                 environment,
@@ -312,6 +336,12 @@ class AoAgent(CcAgent):
                     f"tar -czf {(logs / ORCHESTRATOR_TARBALL).as_posix()} "
                     f"-C {REMOTE_WORKSPACE} .orchestrator 2>/dev/null || true"
                 ),
+            )
+            # Put the task's working dir back (the symlink alone would also work for most
+            # verifiers, so a failed restore is not fatal).
+            await environment.exec(
+                command=(f"if [ -L {repo_q} ]; then rm {repo_q} && mv {ws_repo_q} {repo_q}; fi"),
+                user="root",
             )
 
     @override
