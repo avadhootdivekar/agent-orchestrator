@@ -2,7 +2,7 @@
 
 - ID: `T-Dw5Cal-deepswe-calibration-and-comparison`
 - Updated At: 2026-11-11
-- State: **In Progress** (Phase 0: ao arm end-to-end pending)
+- State: **In Progress** (Phase 0 done; Phase 1a/1b running sequentially, `-n 1`)
 - Owner: Claude (manager) for avadhoot
 
 ## This update
@@ -12,19 +12,31 @@
   pilot finishes.
 - By: Claude · Role: manager · Date: 2026-11-11 · Comment: task opened with the roadmap in TASK.md. TB 2.1
   dropped as a primary suite (near saturated for Sonnet 5.5 / Opus 5.5).
+- By: Claude · Role: manager · Date: 2026-11-11 · Comment: Phase 0 done (`pilot3-tb21-dna-ao-sonnet-nogit`
+  reward 1.0, parity clean, adapter committed 8150ccd). First 1a/1b launch (both arms in parallel, `-n 2`) was
+  killed by host memory pressure during agent setup, $0 spent; job dirs kept as `*.killed-oom`.
+- By: avadhoot · Role: user · Date: 2026-11-11 · Comment: finplan ao run done; `finplan-dev1` (dev cluster) must
+  not go down; rerun the tests at least sequentially if memory allows.
+- By: Claude · Role: manager · Date: 2026-11-11 · Comment: 50 GB available, rerunning 1a then 1b one container at
+  a time (`/var/tmp/ao-harbor/pilot/p1-sequential.sh`), same flags apart from `-n 1`.
 
 ## Spend ledger (list-price equivalent, subscription token)
 | Job | Arm | Tasks | Cap/task | Spent | Note |
 |---|---|---|---|---|---|
 | pilot1-tb21-dna-cc-sonnet | plain Sonnet 5.5 | 1 | $10 | $0.25 | reward 1.0 (T-Hb3Adp pilot) |
 | pilot1/pilot2 ao | ao + Sonnet 5.5 | 1 | $10 | $0.00 | harness errors before any LLM call (fixed) |
+| pilot3-tb21-dna-ao-sonnet-nogit | ao + Sonnet 5.5 | 1 | $10 | $2.05 | reward 1.0, 9.5 min, Phase 0 gate |
+| p1a/p1b `*.killed-oom` | both | 2+2 | $8 | $0.00 | killed in agent setup (memory pressure) |
+
+DeepSWE budget ($100): $0 spent so far.
 
 ## Evidence
 - Oracle: `/var/tmp/ao-harbor/jobs/oracle-pilot-tb21`, `oracle-pilot-deepswe` (5/5 PASS).
+- Phase 0: `/var/tmp/ao-harbor/jobs/pilot3-tb21-dna-ao-sonnet-nogit`.
 
 ## Risks / Blockers
-- None blocking; see TASK.md Risks.
+- None blocking; see TASK.md Risks (host memory shared with other workspaces).
 
 ## Next actions
-1. Finish Phase 0 (ao arm end-to-end on `dna-assembly`, parity, commit adapter changes).
-2. Phase 1a/1b on the 2 oracle-validated DeepSWE tasks; size 1c from the measured cost.
+1. Phase 1a/1b results: reward, cost, minutes, `harbor-parity`, token-leak grep, secrets deleted.
+2. Size 1c from the measured 1a cost.

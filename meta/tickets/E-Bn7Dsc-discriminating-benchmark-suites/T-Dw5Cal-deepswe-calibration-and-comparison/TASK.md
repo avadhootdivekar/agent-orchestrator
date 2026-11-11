@@ -6,7 +6,7 @@
 - Owner: Claude (manager) for avadhoot
 - Created: 2026-11-11
 - Last Updated: 2026-11-11
-- Status: In Progress (Phase 0)
+- Status: In Progress (Phase 1a/1b running)
 - Estimate: Phase 0-1 < 1 day; Phase 2-3 sized after Phase 1
 - Follows: `T-Hb3Adp-bench-harbor-external` (the Harbor harness this task uses)
 
@@ -44,9 +44,9 @@ Findings that set the direction:
   clean `git archive` of a pinned commit (`AO_WHEEL_REF`) so an ao run working in the same checkout never
   leaks into the ao under test; task dir moved into the ao workspace with a symlink left at its path (ao
   confines repos to the workspace root) and moved back before grading.
-- [ ] ao arm end-to-end on one TB 2.1 task (`pilot3-tb21-dna-ao-sonnet-nogit`): reward recorded, `ao-usage.json`
-  cost, overseer run state in `ao-orchestrator.tgz`, `ao-bench harbor-parity` vs the plain job, no token in job
-  files, secrets file deleted. Commit + push the adapter changes only after this passes.
+- [x] ao arm end-to-end on one TB 2.1 task (`pilot3-tb21-dna-ao-sonnet-nogit`): reward 1.0, $2.05, 9.5 min,
+  7 ao tasks succeeded; `ao-bench harbor-parity` clean vs the plain job; no token in job files, secrets file
+  deleted. Adapter changes committed + pushed (8150ccd).
 
 ### Phase 1 - DeepSWE verification + calibration (owner budget: **$100 total**, list-price equivalent)
 Budget split (worst case = tasks x per-task cap, because `run.sh` has no job-level running-total stop):
@@ -94,6 +94,10 @@ Classification (per task, 1c + 1a):
 - Per-task cap too low -> "failed" means "ran out of budget"; mitigated by measuring in 1a and using one cap
   for calibration and comparison alike.
 - DeepSWE images are large: keep 60+ GB free under the Docker data-root; check `docker system df` between jobs.
+- Host memory is shared with other workspaces' runs (finplan dev cluster `finplan-dev1` must stay up): the first
+  1a/1b launch (2 arms x `-n 2` = 4 DeepSWE containers, up to 8 GB each) was killed by Claude Code's
+  memory-pressure reaper during agent setup ($0 spent). Run DeepSWE with `-n 1` and arms sequentially unless
+  `MemAvailable` comfortably exceeds concurrency x 8 GB.
 - Subscription rate limits and the host token (~8 h; `run.sh --min-token-hours`) shared with live ao runs.
 - ao arm overhead counts against the 90 min dataset timeout (by design: same wall clock for both arms).
 - The task-dir move (symlink) could affect a verifier that inspects real paths or a service left running in
