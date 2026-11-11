@@ -2,8 +2,12 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress — NOT Done (gate evidence incomplete; no high finding open)
+- State: In Progress — NOT Done (R-2b and GATE-1 closed; whole-tree gate on a clean tree and REVIEW.md update open)
 - Owner: reviewer agent (overseer w20-02)
+
+## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
+- Since w24-07 below: **R-2b fixed** (`3447aff`, `resume --queue` uses `readonly_fire_store`), **GATE-1 restored** (`1396dac`), `usage_view.py` 100 % (w24-04), FU-10 dead branch removed (`c98832b`), FU-8 done.
+- **Unfinished:** whole-tree pytest/ruff/mypy + UI gates on a clean tree not re-run; `REVIEW.md` still carries the pre-fix R-2 verdict and needs an addendum recording R-2/R-2b/GATE-1 closed; TEST-QUALITY FU-9 (`O_NOFOLLOW` swap race, needs a src seam) and FU-11 remainder deferred; S-7 accepted limitation. Do not mark Done before the clean-tree gate.
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.

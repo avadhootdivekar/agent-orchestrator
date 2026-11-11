@@ -2,8 +2,12 @@
 
 - ID: `T-Ap1Xs3-dashboard-schedules`
 - Updated At: 2026-11-11
-- State: Implemented — awaiting review (ACs 1-18 implemented)
+- State: Implemented — NOT Done: review w26-08 in progress (REVIEW.md is an uncommitted draft; W-1/W-2 open)
 - Owner: developer agent (overseer unit w15-05-a1-dashboard-schedules)
+
+## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
+- Supersedes the w24-07 "no review recorded" line below. `REVIEW.md` (unit w26-08) exists as an **uncommitted draft** with unfilled verdict/AC18-figure placeholders; its recorded outcome so far: no Critical; all 18 ACs Met; Warnings W-1 (enabling a `completed` schedule always 409s under a running daemon and the message says retry; same root cause as T-Un0Lm6 M1), W-2 (Run now says queued for a workspace whose schedules are inert), W-3 (CLI logic triplicated into `ui/service.py`).
+- **Unfinished:** finalize/commit that review, fix W-1/W-2 (W-3 refactor optional). Not edited by this sync.
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.

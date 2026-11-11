@@ -2,8 +2,11 @@
 
 - ID: `T-Wh9Kv1-webhook-ingress`
 - Updated At: 2026-11-11
-- State: Partial — all ACs met incl. AC1 combined auth test and AC7/AC8 github-scheme replay gate; only persistent nonces (T-Se4Bk5 / ADR) open
+- State: Done (accepted limitations) — all ACs met incl. AC1 combined auth test and AC7/AC8 github-scheme replay gate (w26-06, `8d0b4ee`)
 - Owner: developer agent
+
+## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
+- Supersedes the w24-07 block below (Partial): AC7/AC8 and AC1 landed in w26-06. **Unfinished, not ACs:** persistent nonces (github scheme has no signed replay bound; a restart reopens replay of a captured delivery) needs an ADR (T-Se4Bk5 S-7, accepted); L4 mtime caching and a `webhook.expired` event. The w26-06 timestamp gate has had no separate review.
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.

@@ -2,10 +2,32 @@
 
 - ID: `E-Sc9Rt4-scheduler-triggers`
 - Updated At: 2026-11-11
-- State: In Progress (7 of 14 tasks Done; not closed)
+- State: In Progress (9 of 14 tasks Done; 5 NOT Done; not closed)
 - Owner: architect agent (design) → dev-epic agent (delivery)
 
-## Reconciliation 2026-11-11 (w24-07, developer; docs only, branch `ad/enhancements-10nov`, HEAD `1d5c6f9`)
+## Rollup 2026-11-11, re-synced after waves 25-26 (w27-02, developer; docs only, branch `ad/enhancements-10nov`, HEAD `c4e3871`)
+This table is the authoritative rollup and matches `EPIC.md`'s Task List and each task's `STATUS.md`/`TASK.md` header. It supersedes the w24-07 table below (kept as history). **14 tasks: 9 Done, 5 NOT Done. Epic NOT closed.**
+
+| Task | State | Open / unfinished |
+|---|---|---|
+| `T-Sd1Kq7` binding model | Done | - |
+| `T-Fr2Nx8` fire store | Done | - |
+| `T-Ev3Qm5` engine core | Done | - |
+| `T-Ri7Dz2` run-id flag | Done | - |
+| `T-Lp4Wt6` launcher | Done | - |
+| `T-Cl6Jn9` schedule CLI | Done | follow-ups S4 (owner decision), W3 (comment loss) |
+| `T-Fw8Gp4` file watch | Done | accepted limitations L-a, L6, L7 |
+| `T-Sv5Hb3` service integration | **Done** (was Partial) | AC10 closed by w26-05 (`4ec01b4`); known limit: status fallback counts include schedules not opted in |
+| `T-Wh9Kv1` webhook ingress | **Done** (was Partial) | AC7/AC8 github-scheme replay gate + AC1 combined auth test landed w26-06 (`8d0b4ee`); accepted limitation: nonces not persistent across restart (S-7, needs ADR); the new github timestamp gate has had no separate review |
+| `T-Un0Lm6` until | **NOT Done** - Implemented, reviewed | w26-07 review (`c4e3871`): **M1 major** (restart of a `completed` loop impossible while the service runs; AC4 only with service stopped); W1 `until_unreadable` not de-duplicated, W2 `max_runs` counts launches; minors m1-m4. No fix landed yet |
+| `T-Ap1Xs3` dashboard | **NOT Done** - Implemented, review in progress | w26-08 `REVIEW.md` is still an uncommitted draft (verdict/AC18-figure placeholders unfilled): W-1 (same lock problem as until M1, misleading "retry" 409), W-2 (Run now says queued for an inert workspace), W-3 (CLI logic triplicated). No Critical. No fix landed yet |
+| `T-Te3Qw8` e2e suite | **NOT Done** - Partial | AC6, AC8a, AC17 clean-tree before/after delta, AC18 not-exercised list; no independent review |
+| `T-Se4Bk5` security gate | **NOT Done** - In Progress | Closed since w24: R-2b (`3447aff`), GATE-1 (`1396dac`), usage_view 100 %. Still open: whole-tree pytest/ruff/mypy + UI gates on a clean tree; `REVIEW.md` still says R-2 open / pre-dates fixes; TEST-QUALITY FU-8..11 residue (O_NOFOLLOW swap race, jitter flake remainder); S-7 accepted |
+| `T-Dc6Zr2` docs | **NOT Done** - Partial | HLD/ADR-0025 re-sync done w25-06 (`57c8de4`; `[wt]` markers and stale `--watch` wording removed); still open: epic close-out, AC10 file-by-file spot-check of the state-dir layout and the dashboard panel at runtime, and a doc update when M1/W-1 are fixed |
+
+**Rollup: 14 tasks = 9 Done, 5 NOT Done (1 In Progress, 2 Partial, 2 Implemented-with-open-review-findings). Epic: In Progress, NOT closed.** Critical path to close: fix `until` M1 / dashboard W-1 (one shared engine-routed restart request), re-run the whole gate on a clean tree and update `T-Se4Bk5` `REVIEW.md`, finish `T-Te3Qw8` AC6/AC8a/AC17, then `T-Dc6Zr2` close-out. Unfinished product items: comment-preserving `save` (ruamel), persistent webhook nonces (S-7), the restart-of-completed-schedule fix. The live engine/UI is unchanged until a human runs the install flow (not run by any unit).
+
+## Reconciliation 2026-11-11 (w24-07, developer; SUPERSEDED by the w27-02 rollup above; docs only, branch `ad/enhancements-10nov`, HEAD `1d5c6f9`)
 Every task STATUS/TASK now carries a dated Reconciliation block; this table is the authoritative rollup and matches `EPIC.md`'s Task List. The charter's "16 tasks" is wrong: **14**. Older "This update" bullets below pre-date it and are history, not current state.
 
 | Task | State | Unmet ACs / open |
@@ -28,6 +50,7 @@ Every task STATUS/TASK now carries a dated Reconciliation block; this table is t
 **Rollup: 14 tasks = 7 Done, 7 not Done (1 In Progress, 4 Partial, 2 Implemented-awaiting-review). Epic state: In Progress, NOT closed** (the older "Draft" and "6 Done / 1 not started" figures are superseded; `T-Cl6Jn9` and `T-Fw8Gp4` moved to Done, `T-Sv5Hb3` demoted to Partial on its recorded AC10 gap, `T-Se4Bk5` is In Progress not "not started"). Unfinished product items: comment-preserving `save` (ruamel), persistent webhook nonces, `T-Se4Bk5` close-out.
 
 ## This update
+- **2026-11-11 (developer, unit `w27-02-a1-epic-status-sync`; docs/tickets only):** EPIC.md Task List/Status and this rollup re-synced with the code after waves 25-26: R-2b fixed (`3447aff`), GATE-1 restored (`1396dac`), `T-Sv5Hb3` AC10 done (`4ec01b4`), `T-Wh9Kv1` AC7/AC8/AC1 done (`8d0b4ee`), `T-Un0Lm6` review recorded (`c4e3871`, Not Done, M1), `T-Ap1Xs3` review outcome recorded as in progress. Rollup now 9 Done / 5 NOT Done. Per-task STATUS/TASK headers updated to match.
 - **2026-11-12 (developer, unit `w25-06-a1-hld-docs-sync`; docs only):** `docs-md/scheduler-triggers-hld.md` re-synced to the shipped code: §9.1 lists `--watch`/`--watch-on`/`--debounce`/`--poll-seconds`/`--max-files`, `--from-workflow` and the governance flags/commands (checked against `ao schedule add --help`); §21 D1/D2/D6 and §22 rewritten, all `[wt]` markers and "not shipped" wording removed; §22 now defers to this file. Governance HLD §26 and ADR-0025 "Implementation outcome" aligned (pause/resume, `--cost-cap-usd`, CLI commands, usage route are committed). Unfinished: none in docs beyond the open ticket items listed above.
 - **2026-11-11 (developer, unit `w23-05-a1-security-gate-closeout`):** `T-Se4Bk5` AC7 (threat-model delta, in SECURITY.md + ADR-0014), AC14 UI/coverage evidence (`make ui-typecheck` clean, `make ui-test` 915 passed, scheduler/service coverage 96 % aggregate, `usage_view.py` 78 % below floor) and AC16 (EPIC/ADR sync) done; docs only. **`T-Se4Bk5` is NOT Done: R-2 (high, unlocked fire-record cost-mark writers) is open, fix owned by unit w23-01.** Task rollup unchanged: 6 Done, 7 partial/in review, `T-Se4Bk5` in progress (no longer "not started"). Epic state stays Draft until R-2 is re-verified and the whole-tree gate is re-run on a clean tree.
 - **2026-11-11 (developer, unit `w20-07-a1-docs-refresh`):** `T-Dc6Zr2` docs reconciliation done (partial: epic not closed). HLD §21 deviations / §22 status / §23 constants sweep, ADR-0014 late-gate corrections, LLD, README, ROADMAP, ai-epics traceability, operator guide `docs-md/guide-scheduled-runs.md`. **Task rollup:** 6 Done (`T-Sd1Kq7`, `T-Fr2Nx8`, `T-Ev3Qm5`, `T-Lp4Wt6`, `T-Sv5Hb3`, `T-Ri7Dz2`); 7 partial/in review (`T-Cl6Jn9`, `T-Fw8Gp4`, `T-Wh9Kv1`, `T-Un0Lm6`, `T-Ap1Xs3`, `T-Te3Qw8`, `T-Dc6Zr2`); 1 not started (`T-Se4Bk5`). Suite 1233 passed / 1 failed (stale `test_hld_event_table_is_complete`); `mypy src` clean. Unfinished product items: `ao schedule add --watch`/`--from-workflow`, ruamel comment-preserving `save`, security gate. State below stays Draft until the gate runs.

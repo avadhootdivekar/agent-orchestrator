@@ -6,7 +6,7 @@
 - Owner: tester agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F1/F2/F7/F8/F9/F10/F14/F20 applied)
-- Status: Partial (reconciled 2026-11-11, w24-07; see STATUS.md)
+- Status: Partial — NOT Done (synced w27-02)
 - Estimate: 3 days
 
 ## Requirements Mapping

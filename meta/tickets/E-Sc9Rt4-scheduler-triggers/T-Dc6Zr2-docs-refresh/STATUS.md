@@ -5,6 +5,10 @@
 - State: Partial — docs reconciled with landed code; epic cannot close
 - Owner: developer agent (overseer unit w20-07-a1-docs-refresh)
 
+## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
+- Supersedes the w24-07 open list below for HLD items: w25-06 (`57c8de4`) re-synced the HLD, governance HLD §26 and ADR-0025 (`[wt]` markers and the `--watch`/`--from-workflow` "not shipped" wording are gone).
+- **Unfinished:** epic close-out (blocked on T-Se4Bk5, T-Te3Qw8, T-Un0Lm6, T-Ap1Xs3); AC10 file-by-file spot-check of the §5.3 state-dir layout and of the dashboard panel at runtime; docs must be updated when the until M1 / dashboard W-1 restart fix lands (the guide currently does not say the service must be stopped to restart a completed schedule).
+
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
 - State: **Partial — docs reconciled with landed code; epic cannot close**

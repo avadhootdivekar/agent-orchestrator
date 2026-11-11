@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F16/F20 applied)
-- Status: Implemented (awaiting review) (reconciled 2026-11-11, w24-07; see STATUS.md)
+- Status: Implemented — reviewed (w26-07), NOT Done: M1 open (synced w27-02)
 - Estimate: 2 days
 
 ## Requirements Mapping

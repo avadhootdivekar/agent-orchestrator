@@ -5,6 +5,10 @@
 - State: Implemented — reviewed 2026-11-11 (w26-07), NOT Done: M1 restart-under-service open (see REVIEW.md)
 - Owner: developer agent
 
+## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
+- Supersedes the w24-07 "awaiting review" line below: review recorded in `REVIEW.md` (`c4e3871`), verdict Not Done.
+- **Unfinished:** M1 (restart of a `completed` loop impossible while the service runs; fix via an engine-applied restart request, or document "stop the service"), W1 (`until_unreadable` not de-duplicated), W2 (`max_runs` counts launches), minors m1-m4. No fix has landed; ACs 1-14 remain implemented.
+
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
 - State: **Implemented — awaiting review (all 14 ACs met, no independent review recorded)**

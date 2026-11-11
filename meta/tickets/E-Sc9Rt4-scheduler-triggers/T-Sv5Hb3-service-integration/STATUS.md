@@ -5,6 +5,9 @@
 - State: Done — all ACs implemented (AC10 closed by w26-05)
 - Owner: TBD (assigned at sprint start)
 
+## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
+- Supersedes the w24-07 block below, which still says Partial: AC10 closed by w26-05 (`4ec01b4`), all ACs met. Nothing unfinished; known limit: the status-fallback summary counts every schedule in `state.json` (no opt-in filter).
+
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
 - State: **Partial — all ACs implemented and reviewed except AC10 (status fallback)**

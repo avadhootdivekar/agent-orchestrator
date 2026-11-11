@@ -2,8 +2,11 @@
 
 - ID: `T-Te3Qw8-integration-e2e-suite`
 - Updated At: 2026-11-11
-- State: Partial
+- State: Partial — NOT Done
 - Owner: TBD (assigned at sprint start)
+
+## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
+- No change since w24-07 below. **Unfinished:** AC6, AC8a, AC17 (clean-tree whole-suite delta), AC18 not-exercised list; no independent review. Blocked on the T-Se4Bk5 clean-tree gate re-run for AC17.
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.

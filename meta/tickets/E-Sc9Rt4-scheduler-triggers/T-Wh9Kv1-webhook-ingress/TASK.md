@@ -6,7 +6,7 @@
 - Owner: developer agent (security-sensitive — `T-Se4Bk5` audits this module specifically)
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F6/F14/F16/F18/F20 applied)
-- Status: Partial (reconciled 2026-11-11, w24-07; see STATUS.md)
+- Status: Done (accepted limitations) (synced w27-02)
 - Estimate: 3 days
 
 ## Requirements Mapping
