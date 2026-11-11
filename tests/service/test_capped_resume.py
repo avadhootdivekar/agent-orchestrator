@@ -16,9 +16,11 @@ import pytest
 
 from agent_orchestrator.models import RunState, TaskRunState, TrippedBreaker
 from agent_orchestrator.schedules.governance import (
+    MAX_USD,
     CostLimits,
     LimitsSpec,
     PeriodCostCap,
+    QuotaSpec,
 )
 from agent_orchestrator.service import capped_resume as cr
 from agent_orchestrator.service.fire_store import (
@@ -749,3 +751,54 @@ def test_post_spawn_argv_without_the_cap_cancels_the_resumed_child(tmp_path: Pat
     with pytest.raises(CostCapNotForwardedError):
         rig.launcher.launch_capped_resume(rec, 3.0)
     assert rig.sup.cancelled == [rec.run_id]
+
+
+# -- T-lTW88y H-2 audit: a top-up can never mint an unbounded cap (re-landed, w23-06) ------------
+
+
+def test_max_add_is_bounded_without_per_run_or_period_cap(tmp_path: Path) -> None:
+    """No per-run cap and no period cap (remaining == inf): the absolute MAX_USD bounds it."""
+    lim = limits(per_run=None, week=None)
+    lim.quotas = [QuotaSpec(period="day", max_runs=5)]  # D-2: some limit must be declared
+    rig = Rig(tmp_path, lim=lim)
+    assert cr.max_add(rig.binding, math.inf) == MAX_USD
+    assert cr.max_add(rig.binding, 7.5) == 7.5  # finite headroom still wins when smaller
+    assert cr.max_add(rig.binding, -1.0) == 0.0  # never negative
+
+
+def test_max_add_with_per_run_ignores_headroom(rig: Rig) -> None:
+    assert cr.max_add(rig.binding, math.inf) == PER_RUN * cr.MAX_RESUME_FACTOR
+
+
+def _req_body(**over: Any) -> dict[str, Any]:
+    body = {
+        "kind": "resume_capped", "workspace_root": "w", "schedule_id": "s", "run_id": "r",
+        "add_usd": 1.0, "new_cap_usd": 3.0, "requested_by": "cli",
+        "requested_at": NOW.isoformat(), "request_id": "req-1",
+    }  # fmt: skip
+    return body | over
+
+
+def test_from_json_accepts_a_well_formed_body() -> None:
+    req = cr.ResumeCappedRequest.from_json(_req_body())
+    assert req is not None and req.requested_by == "cli" and req.request_id == "req-1"
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"requested_by": "x" * (cr.MAX_REQUEST_TEXT + 1)},  # unbounded free text
+        {"request_id": "../../etc/passwd"},  # path-ish id
+        {"request_id": ""},
+        {"request_id": "a" * 65},
+        {"add_usd": float("nan")},
+        {"new_cap_usd": float("inf")},
+        {"requested_at": "2026-01-01T00:00:00"},  # naive timestamp
+        {"run_id": 7},  # non-string identifier
+    ],
+)
+def test_from_json_rejects_unbounded_or_malformed_fields(over: dict[str, Any]) -> None:
+    assert cr.ResumeCappedRequest.from_json(_req_body(**over)) is None
+    # the text-bound edge itself is accepted
+    ok = cr.ResumeCappedRequest.from_json(_req_body(requested_by="x" * cr.MAX_REQUEST_TEXT))
+    assert ok is not None

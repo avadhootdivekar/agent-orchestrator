@@ -442,3 +442,33 @@ def test_no_test_touches_home(env: Env) -> None:
     assert str(Path.home()) not in str(env.state) and os.environ["AO_SERVICE_STATE_DIR"] == str(
         env.state
     )
+
+
+# -- Q-11: week / month rollover at the CLI tier (Europe/Berlin local midnight) -------------------
+
+
+def _usage_at(env: Env, at: datetime) -> dict[str, dict[str, Any]]:
+    doc = json.loads(env.run("usage", "daily", "--at", at.isoformat(), "--json").output)
+    return {w["period"]: w for w in doc["schedules"][0]["windows"]}
+
+
+def test_usage_week_and_month_roll_over_at_local_midnight(env: Env) -> None:
+    env.add("daily", *LIMIT_FLAGS, "--quota", "month=100")
+    # Sun 11-15 23:30 CET / Mon 11-16 00:30 CET; Mon 11-30 23:30 CET / Tue 12-01 00:30 CET
+    env.fire("w-sun", datetime(2026, 11, 15, 22, 30, tzinfo=UTC), cost=1.0, final=True)
+    env.fire("w-mon", datetime(2026, 11, 15, 23, 30, tzinfo=UTC), cost=2.0, final=True)
+    env.fire("m-nov", datetime(2026, 11, 30, 22, 30, tzinfo=UTC), cost=4.0, final=True)
+    env.fire("m-dec", datetime(2026, 11, 30, 23, 30, tzinfo=UTC), cost=8.0, final=True)
+
+    sun = _usage_at(env, datetime(2026, 11, 15, 22, 45, tzinfo=UTC))  # Sunday 23:45 CET
+    mon = _usage_at(env, datetime(2026, 11, 15, 23, 45, tzinfo=UTC))  # Monday 00:45 CET
+    assert sun["week"]["runs"] == 1 and sun["week"]["actual_usd"] == pytest.approx(1.0)
+    assert mon["week"]["runs"] == 1 and mon["week"]["actual_usd"] == pytest.approx(2.0)
+    assert sun["week"]["resets_at"] != mon["week"]["resets_at"]  # a new Monday-start week
+    assert sun["month"]["runs"] == 3  # w-sun, w-mon, m-nov are November; m-dec is not
+
+    nov = _usage_at(env, datetime(2026, 11, 30, 22, 45, tzinfo=UTC))  # Nov 30, 23:45 CET
+    dec = _usage_at(env, datetime(2026, 11, 30, 23, 45, tzinfo=UTC))  # Dec 1, 00:45 CET
+    assert nov["month"]["runs"] == 3 and nov["month"]["actual_usd"] == pytest.approx(7.0)
+    assert dec["month"]["runs"] == 1 and dec["month"]["actual_usd"] == pytest.approx(8.0)
+    assert nov["month"]["resets_at"] != dec["month"]["resets_at"]

@@ -265,7 +265,7 @@ def test_gate_is_consulted_at_each_dispatch_and_boundary_with_work_left(
     workspace: Path, store, rs_store
 ) -> None:
     """Spy on the gate: one dispatch check per task plus one boundary check while work remains.
-    (Injected-task and redispatch paths are not exercised here; see the epic STATUS follow-ups.)"""
+    (Injected-task and redispatch paths: the ``test_q4_*`` tests below.)"""
     calls: list[str] = []
     orch = Orchestrator(_costs(t1=0.1, t2=0.1), store, rs_store, clock=lambda: _T0, cost_cap_usd=9)
     orig = orch._trip_cost_cap
@@ -273,6 +273,134 @@ def test_gate_is_consulted_at_each_dispatch_and_boundary_with_work_left(
     orch.run(_wf(workspace, 2), _reposets(workspace), AGENTS)
     # dispatch(t1), boundary after t1 (t2 left), dispatch(t2); no boundary after t2 (nothing left)
     assert len(calls) == 3
+
+
+# -- Q-4: injected and redispatched tasks go through the dispatch gate (w23-06) ------------------
+
+_MANIFEST = "output/task-manifest.json"
+
+
+def _emitter_wf(workspace: Path) -> WorkflowSpec:
+    """One static ``emit`` task that injects ``inj`` (depends on ``emit``)."""
+    wf = _wf(workspace, 1, tasks=[{"id": "emit"}])
+    wf.tasks[0].emit_tasks = True
+    wf.tasks[0].task_manifest_path = _MANIFEST
+    (workspace / "specs" / "instructions" / "inj.md").write_text("x")
+    return wf
+
+
+def _emit_executor(**costs: float) -> FakeExecutor:
+    inj = {
+        "id": "inj",
+        "agent": "ag",
+        "instruction": "specs/instructions/inj.md",
+        "outputs": [],
+        "depends_on": ["emit"],
+    }
+    return FakeExecutor(
+        emit_payloads={"emit": {"tasks": [inj]}},
+        token_outputs={t: {"cost_usd": c} for t, c in costs.items()},
+    )
+
+
+def _record_dispatches(ex: FakeExecutor) -> list[str]:
+    seen: list[str] = []
+    orig = ex.execute
+    ex.execute = lambda ctx: (seen.append(ctx.task_id), orig(ctx))[1]  # type: ignore[method-assign]
+    return seen
+
+
+def test_q4_injected_task_is_held_by_the_gate_when_the_emitter_reaches_the_cap(
+    workspace: Path, store, rs_store
+) -> None:
+    ex = _emit_executor(emit=0.6, inj=0.1)
+    seen = _record_dispatches(ex)
+    orch = Orchestrator(ex, store, rs_store, clock=lambda: _T0, cost_cap_usd=0.5)
+    st = orch.run(_emitter_wf(workspace), _reposets(workspace), AGENTS)
+    assert st.tasks["inj"].origin == "injected"  # it really was injected into the run...
+    assert seen == ["emit"]  # ...and never dispatched: the gate halted before it
+    assert st.tasks["inj"].status == "pending"
+    assert st.status == "failed" and len(_cap_trips(st)) == 1
+
+
+def test_q4_injected_task_dispatch_consults_the_gate_below_the_cap(
+    workspace: Path, store, rs_store
+) -> None:
+    ex = _emit_executor(emit=0.1, inj=0.1)
+    seen = _record_dispatches(ex)
+    orch = Orchestrator(ex, store, rs_store, clock=lambda: _T0, cost_cap_usd=9)
+    calls: list[int] = []
+    orig = orch._trip_cost_cap
+    orch._trip_cost_cap = lambda s, log: (calls.append(len(s.injected_tasks)), orig(s, log))[1]  # type: ignore[method-assign]
+    st = orch.run(_emitter_wf(workspace), _reposets(workspace), AGENTS)
+    assert st.status == "succeeded" and seen == ["emit", "inj"]
+    # dispatch(emit) before injection (0 injected); boundary after emit (injected, work left) and
+    # dispatch(inj) both see the injected task: the injected dispatch is gated like any other
+    assert calls == [0, 1, 1]
+
+
+def test_q4_resumed_run_redispatches_the_injected_task_through_the_gate(
+    workspace: Path, store, rs_store
+) -> None:
+    """Resume re-dispatches a pending injected task: held at cap, runs once the cap is raised."""
+    wf = _emitter_wf(workspace)
+    st = Orchestrator(
+        _emit_executor(emit=0.6), store, rs_store, clock=lambda: _T0, cost_cap_usd=0.5
+    ).run(wf, _reposets(workspace), AGENTS)
+    assert [t.id for t in st.injected_tasks] == ["inj"]
+    # same (sticky) cap: the redispatch is refused by the gate (zero dispatches, fresh trip)
+    ex = _emit_executor(inj=0.1)
+    seen = _record_dispatches(ex)
+    st2 = rs_store.prepare_resume(rs_store.load(st.run_id), wf)
+    out = Orchestrator(ex, store, rs_store, clock=lambda: _T0).run(
+        wf, _reposets(workspace), AGENTS, run_state=st2
+    )
+    assert seen == [] and len(_cap_trips(out)) == 2
+    # raised cap: the injected task is dispatched exactly once and the run completes
+    ex3 = _emit_executor(inj=0.1)
+    seen3 = _record_dispatches(ex3)
+    st3 = rs_store.prepare_resume(rs_store.load(st.run_id), wf)
+    done = Orchestrator(ex3, store, rs_store, clock=lambda: _T0, cost_cap_usd=5.0).run(
+        wf, _reposets(workspace), AGENTS, run_state=st3
+    )
+    assert seen3 == ["inj"] and done.status == "succeeded"
+
+
+def test_q4_redispatch_of_a_failed_task_is_gated_on_resume(
+    workspace: Path, store, rs_store
+) -> None:
+    """A failed task that resume resets to pending is a redispatch: the gate sees it too.
+
+    Resume drops the failed task's own spend (only settled tasks keep theirs), so the gate
+    judges the redispatch against t1's 0.3: refused under a 0.25 cap, dispatched under a 5.0 cap.
+    """
+    wf = _wf(workspace, 2)
+    st = Orchestrator(
+        FakeExecutor(behaviors={"t2": "fail"}, token_outputs={"t1": {"cost_usd": 0.3}}),
+        store,
+        rs_store,
+        clock=lambda: _T0,
+        cost_cap_usd=5.0,
+    ).run(wf, _reposets(workspace), AGENTS)
+    assert st.tasks["t1"].status == "succeeded" and st.tasks["t2"].status == "failed"
+    assert _cap_trips(st) == []  # a plain failure, not a cap trip
+
+    ex = _costs(t2=0.1)
+    seen = _record_dispatches(ex)
+    st2 = rs_store.prepare_resume(rs_store.load(st.run_id), wf)
+    assert st2.tasks["t2"].status == "pending"
+    out = Orchestrator(ex, store, rs_store, clock=lambda: _T0, cost_cap_usd=0.25).run(
+        wf, _reposets(workspace), AGENTS, run_state=st2
+    )
+    assert seen == [] and len(_cap_trips(out)) == 1  # redispatch refused: settled 0.3 >= 0.25
+
+    ex3 = _costs(t2=0.1)
+    seen3 = _record_dispatches(ex3)
+    st3 = rs_store.prepare_resume(rs_store.load(st.run_id), wf)
+    done = Orchestrator(ex3, store, rs_store, clock=lambda: _T0, cost_cap_usd=5.0).run(
+        wf, _reposets(workspace), AGENTS, run_state=st3
+    )
+    assert seen3 == ["t2"] and done.status == "succeeded"
 
 
 # -- AC7 --------------------------------------------------------------------------------------

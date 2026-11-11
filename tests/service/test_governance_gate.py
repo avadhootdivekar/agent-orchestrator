@@ -589,14 +589,14 @@ def test_queued_fire_within_quota_drains(tmp_path: Path) -> None:
 # -- AC13 tick budget -------------------------------------------------------------------------
 
 
-def test_tick_over_200_governed_schedules_stays_in_budget(tmp_path: Path) -> None:
+def _tick_200_rig(tmp_path: Path) -> tuple[Env, FireRecordLedger]:
+    """200 governed schedules x 30 launched records each (aged so the dir cache is trusted)."""
     n, per = 200, 30
     bs = [binding(f"s{i}", limits=limits(quota_day=10_000), max_concurrent=1000) for i in range(n)]
     env = env_for(
         tmp_path, bs, launcher=None, max_concurrent_global=1000
     )  # decide only: launching writes (and rescans)
-    store = env.engine.fire_store
-    d = store.directory(env.root)
+    d = env.engine.fire_store.directory(env.root)
     d.mkdir(parents=True, exist_ok=True)
     for i in range(n):
         for j in range(per):
@@ -617,13 +617,28 @@ def test_tick_over_200_governed_schedules_stays_in_budget(tmp_path: Path) -> Non
         env.engine.state_store.advance_anchor(env.root, f"s{i}", T0)
     ledger = env.engine.usage_ledger
     assert isinstance(ledger, FireRecordLedger)
+    return env, ledger
+
+
+def test_tick_over_200_governed_schedules_scans_the_ledger_once(tmp_path: Path) -> None:
+    """Deterministic AC13 gate (counters, no clock): one directory scan for the whole tick."""
+    env, ledger = _tick_200_rig(tmp_path)
+    fired = env.tick(NOW1)
+    assert len(fired) == 200
+    assert ledger.scans == 1  # a per-schedule rescan regression would make this 200
+    assert env.events("schedule.tick_budget_exceeded") == []
+
+
+@pytest.mark.perf
+def test_perf_tick_over_200_governed_schedules_stays_in_budget(tmp_path: Path) -> None:
+    """Wall-clock envelope; opt out with ``-m "not perf"`` on a loaded host (Q-5). Only trusted
+    once the scan counter proves the fast path was taken (a slow tick with scans == 200 is a
+    regression, not noise)."""
+    env, ledger = _tick_200_rig(tmp_path)
     t = time.perf_counter()
     fired = env.tick(NOW1)
     elapsed = time.perf_counter() - t
-    assert len(fired) == n
-    print(f"200 schedules x 30 records: {elapsed * 1000:.0f} ms, scans={ledger.scans}")
-    assert ledger.scans == 1
-    assert env.events("schedule.tick_budget_exceeded") == []
+    assert len(fired) == 200 and ledger.scans == 1
     # ~0.3 s measured without coverage; the cap leaves headroom for slow/instrumented CI while
     # still failing if the per-schedule rescan regresses (that costs ~15 s).
     assert elapsed < SLOW_CI_FACTOR * se.SCHEDULE_TICK_BUDGET_SECONDS
