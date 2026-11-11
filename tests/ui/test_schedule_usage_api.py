@@ -169,3 +169,36 @@ def test_governance_events_newest_first_filtered_and_clamped(
     assert client.get(f"{URL}/governance-events", params={"limit": 0}).status_code == 422
     assert client.get(f"{URL}/governance-events", params={"limit": 501}).status_code == 422
     assert client.get(f"{URL}/governance-events", params={"id": "nope"}).status_code == 404
+
+
+def test_usage_api_never_writes_fire_records(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    """T-Se4Bk5 R-2: the dashboard is a second process; its ledger must not persist cost marks
+    (unlocked read-modify-write racing the engine's fire writes)."""
+    store = FireIntentStore(state_dir)
+    store.write(
+        FireIntentRecord(
+            fire_key="k", workspace_root=svc.workspace_root, schedule_id="a",
+            scheduled_for=NOW - timedelta(hours=1), created_at=NOW - timedelta(hours=1),
+            status="launched", run_id="r",
+            governance=FireGovernance(reserved_usd=2.0, run_cost_cap_usd=2.0),
+        )
+    )  # fmt: skip
+    run_dir = Path(svc.workspace_root) / ".orchestrator" / "runs" / "r"
+    run_dir.mkdir(parents=True)
+    from agent_orchestrator.models import RunState, TaskRunState
+
+    st = RunState(
+        run_id="r", workflow_id="w", started_at=NOW.isoformat(), updated_at=NOW.isoformat(),
+        status="running",
+        tasks={
+            "t": TaskRunState(status="succeeded", cumulative_cost_usd=1.5, actuals_available=True)
+        },
+    )  # type: ignore[arg-type]  # fmt: skip
+    (run_dir / "state.json").write_text(st.model_dump_json(), encoding="utf-8")
+    path = store.directory(svc.workspace_root) / "k.json"
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    (w,) = client.get(f"{URL}/a/usage").json()["windows"]
+    assert w["actual_usd"] == pytest.approx(1.5)  # observed cost is reported...
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before  # ...never persisted

@@ -13,12 +13,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Final
 from zoneinfo import ZoneInfo
 
 from ..service.fire_store import (
-    FireGovernance,
     FireIntentRecord,
     FireIntentStore,
     ScheduleEventLog,
@@ -154,22 +152,6 @@ def reason_with_period(event: dict[str, Any]) -> str:
     reason = str(event.get("reason") or NO_VALUE)
     period = event.get("period")
     return f"{reason} ({period})" if period and reason != NO_VALUE else reason
-
-
-class _ReadOnlyFireStore(FireIntentStore):
-    """A fire store whose governance write-back is applied in memory only: the ledger persists
-    cost high-water marks on read, which a CLI view / ``--at`` projection must never do."""
-
-    def update_governance(self, fire_key: str, **fields: Any) -> FireIntentRecord:
-        rec = self.get(fire_key)
-        if rec is None:
-            raise KeyError(fire_key)
-        gov = (rec.governance or FireGovernance()).model_copy(update=fields)
-        return rec.model_copy(update={"governance": gov})
-
-
-def readonly_fire_store(state_dir: Path) -> FireIntentStore:
-    return _ReadOnlyFireStore(state_dir)
 
 
 def build_usage_doc(

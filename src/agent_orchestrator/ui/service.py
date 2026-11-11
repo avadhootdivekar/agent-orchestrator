@@ -61,6 +61,7 @@ from ..service.fire_store import (
     FireIntentStore,
     ScheduleEventLog,
     ScheduleStateStore,
+    readonly_fire_store,
 )
 from ..service.paths import default_state_dir
 from ..service.schedule_engine import (
@@ -1330,7 +1331,9 @@ class DashboardService:
             instant, periods, ZoneInfo(binding.timezone or "UTC"), binding.week_start or "monday"
         )
         sdir = self._schedule_state_dir_path()
-        usage = UsageLedger(FireIntentStore(sdir)).usage(self.workspace_root, schedule_id, windows)
+        usage = UsageLedger(readonly_fire_store(sdir)).usage(
+            self.workspace_root, schedule_id, windows
+        )
         skips = self._governance_skips(schedule_id)
         rows = []
         for period, w in windows.items():

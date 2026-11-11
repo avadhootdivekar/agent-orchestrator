@@ -114,3 +114,14 @@
 - Still NOT done: R-2 fix (blocks Done), AC7 threat-model paragraph, AC14 `make ui-typecheck`/`ui-test` and
   coverage, AC16 (EPIC/ADR-0014 sync, including the late-gate note that AC2's "ALLOWED_OPTIONS unchanged" is
   superseded by `cost_cap_usd`).
+
+### 2026-11-11 — R-2 view-path fix (By: developer unit w23-01 · Role: developer · Date: 2026-11-11)
+- Comment: `ReadOnlyFireStore` / `readonly_fire_store` moved from `schedules/usage_view.py` to `service/fire_store.py`
+  (in-memory `update_governance`, never persists). The CLI views already used it; the dashboard usage API
+  (`ui/service.py` `schedule_usage`) built a writable `UsageLedger` and now uses it too. Governance semantics unchanged;
+  the engine's own ledger still persists marks. `ao resume` (a write path) is unchanged.
+- Regression tests (each fails with the view ledger on a writable store, passes with the fix):
+  `tests/service/test_usage_ledger.py::test_r2_*` (2), `tests/ui/test_schedule_usage_api.py::test_usage_api_never_writes_fire_records`.
+- R-2 closed. Remaining open: AC7, AC14 UI gates/coverage, AC16 (unchanged).
+
+- 2026-11-11 (tester, w23-03): TEST-QUALITY FU-1 and FU-2 closed (commit 5e118bc). Engine DST tests: tests/service/test_schedule_engine_dst.py. FU-3..FU-11 remain open.

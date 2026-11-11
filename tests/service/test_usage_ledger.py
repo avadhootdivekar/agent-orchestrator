@@ -18,6 +18,7 @@ from agent_orchestrator.service.fire_store import (
     FireGovernance,
     FireIntentRecord,
     FireIntentStore,
+    readonly_fire_store,
 )
 from agent_orchestrator.service.usage_ledger import (
     EVENT_COST_UNKNOWN,
@@ -25,6 +26,7 @@ from agent_orchestrator.service.usage_ledger import (
     RunProbe,
     UsageLedger,
     WindowUsage,
+    probe_run,
     run_confidence,
 )
 
@@ -434,7 +436,7 @@ def test_note_written_upserts_into_built_index(tmp_path: Path) -> None:
     assert other._index == {}
 
 
-def test_ac8_month_usage_of_one_schedule_over_50k_records_is_fast(tmp_path: Path) -> None:
+def _rig_50k(tmp_path: Path) -> tuple[Rig, dict, int]:
     r = Rig(tmp_path)
     d = r.store.directory(r.root)
     d.mkdir(parents=True)
@@ -445,7 +447,7 @@ def test_ac8_month_usage_of_one_schedule_over_50k_records_is_fast(tmp_path: Path
         sf = month_start + timedelta(minutes=i % 40_000) - timedelta(days=(i % 7) * 40)
         sid = f"s{i % 100}"
         # s0's records are started runs (each counts 1), the rest suppressed: a fast path that
-        # returned an empty or wrong window would fail the count below, not just pass the timer
+        # returned an empty or wrong window would fail the count, not just pass the timer
         rec = FireIntentRecord(
             fire_key=f"k{i}", workspace_root=r.root, schedule_id=sid, scheduled_for=sf,
             created_at=sf, status="launched" if sid == "s0" else "suppressed",
@@ -453,12 +455,32 @@ def test_ac8_month_usage_of_one_schedule_over_50k_records_is_fast(tmp_path: Path
         (d / f"k{i}.json").write_text(rec.model_dump_json())
         expected += sid == "s0" and w["month"].start <= sf < w["month"].end
     assert expected > 0
+    return r, w, expected
+
+
+def test_ac8_month_usage_over_50k_records_is_exact_and_warm_reads_do_not_rescan(
+    tmp_path: Path,
+) -> None:
+    """Deterministic AC8 gate: exact count, one index build, warm reads add no scan."""
+    r, w, expected = _rig_50k(tmp_path)
+    assert r.ledger.usage(r.root, "s0", w)["month"].runs == expected  # cold: builds the index
+    scans = r.ledger.scans
+    assert scans >= 1
+    assert r.ledger.usage(r.root, "s0", w)["month"].runs == expected
+    assert r.ledger.scans == scans  # warm read served from the index
+
+
+@pytest.mark.perf
+def test_perf_ac8_month_usage_over_50k_records_is_fast(tmp_path: Path) -> None:
+    """Wall-clock envelope (spec 50 ms, x10 CI margin); opt out with ``-m "not perf"`` (Q-5)."""
+    r, w, expected = _rig_50k(tmp_path)
     assert r.ledger.usage(r.root, "s0", w)["month"].runs == expected  # warm: builds the index
+    scans = r.ledger.scans
     t = time.perf_counter()
     got = r.ledger.usage(r.root, "s0", w)
     elapsed = time.perf_counter() - t
-    assert got["month"].runs == expected
-    assert elapsed < 0.05 * 10, elapsed  # spec 50 ms; x10 CI margin
+    assert got["month"].runs == expected and r.ledger.scans == scans  # counter gate first
+    assert elapsed < 0.05 * 10, elapsed
 
 
 # -- AC9: probe + grace ------------------------------------------------------------------------
@@ -547,3 +569,53 @@ def test_window_bounds_start_inclusive_end_exclusive(tmp_path: Path) -> None:
     r.fire("at_end", sf=w.end, status="intended")
     r.fire("last", sf=w.end - timedelta(seconds=1), status="intended")
     assert r.ledger.usage(r.root, "s", {"day": w})["day"].runs == 2
+
+
+# -- T-Se4Bk5 R-2: view callers never write fire records ---------------------------------------
+
+
+def _view_rig(tmp_path: Path, **kw: Any) -> tuple[Rig, UsageLedger]:
+    """A Rig whose engine-side store is writable, plus a ledger over the read-only view store."""
+    r = Rig(tmp_path, **kw)
+    view = UsageLedger(
+        readonly_fire_store(tmp_path / "state"), clock=lambda: r.now,
+        fs_now_ns=lambda: FAR_FUTURE_NS,
+    )  # fmt: skip
+    return r, view
+
+
+def test_r2_view_ledger_never_rewrites_fire_records(tmp_path: Path) -> None:
+    r, view = _view_rig(tmp_path)
+    r.state("r", "running", [(1.0, True, 0, "succeeded")])
+    rec = r.fire("a", run="r")
+    path = r.store.directory(r.root) / f"{rec.fire_key}.json"
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    w = window_for(NOW, "day", UTC_TZ, "monday")
+    u = view.usage(r.root, "s", {"day": w})["day"]
+    assert u.actual_usd == 1.0  # the view still reports the observed cost (in memory)
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before  # ...but wrote nothing
+    # the same call through the writable ledger does persist the mark (the bug's trigger)
+    r.ledger.usage(r.root, "s", {"day": w})
+    assert r.store.get("a", r.root).governance.cost_observed_usd == 1.0  # type: ignore[union-attr]
+
+
+def test_r2_view_does_not_clobber_a_concurrent_engine_governance_write(tmp_path: Path) -> None:
+    """The engine writes ``cap_state`` after the view read the record, before it would write back:
+    a writable view would roll that write back (unlocked read-modify-write)."""
+    r = Rig(tmp_path)
+    r.state("r", "running", [(1.0, True, 0, "succeeded")])
+    r.fire("a", run="r")
+    engine_store = FireIntentStore(tmp_path / "state")
+
+    def racing_loader(root: str, run_id: str) -> Any:
+        engine_store.update_governance("a", cap_state="paused")  # lands mid-view
+        return probe_run(root, run_id)
+
+    view = UsageLedger(
+        readonly_fire_store(tmp_path / "state"), clock=lambda: r.now,
+        run_state_loader=racing_loader, fs_now_ns=lambda: FAR_FUTURE_NS,
+    )  # fmt: skip
+    view.usage(r.root, "s", {"day": window_for(NOW, "day", UTC_TZ, "monday")})
+    g = r.store.get("a", r.root).governance  # type: ignore[union-attr]
+    assert g.cap_state == "paused" and g.cost_observed_usd == 0.0  # engine's write intact
+    assert view.writes == 1  # the in-memory mark was applied, nothing hit disk

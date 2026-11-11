@@ -46,6 +46,7 @@ from ..service.fire_store import (
     ScheduleEventLog,
     ScheduleState,
     ScheduleStateStore,
+    readonly_fire_store,
 )
 from ..service.governance_gate import gate
 from ..service.paths import default_registry_path, default_state_dir
@@ -78,7 +79,6 @@ from .usage_view import (
     compact_limits,
     governance_fields,
     paused_records,
-    readonly_fire_store,
     reason_with_period,
     render_usage,
 )

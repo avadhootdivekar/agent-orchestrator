@@ -405,6 +405,24 @@ class FireIntentStore:
 # -- schedule state ----------------------------------------------------------------------------
 
 
+class ReadOnlyFireStore(FireIntentStore):
+    """A fire store whose governance write-back is applied in memory only. The ledger persists
+    cost high-water marks on read; ``update_governance`` is an unlocked read-modify-write, so a
+    view process (CLI, dashboard) doing it would race the engine's fire writes (T-Se4Bk5 R-2)."""
+
+    def update_governance(self, fire_key: str, **fields: Any) -> FireIntentRecord:
+        rec = self.get(fire_key)
+        if rec is None:
+            raise KeyError(fire_key)
+        gov = (rec.governance or FireGovernance()).model_copy(update=fields)
+        return rec.model_copy(update={"governance": gov})
+
+
+def readonly_fire_store(state_dir: Path) -> FireIntentStore:
+    """Store for view callers (CLI usage/next, dashboard usage API): never writes fire records."""
+    return ReadOnlyFireStore(state_dir)
+
+
 class ScheduleState(BaseModel):
     """Runtime state for one ``<workspace_slug>|<schedule_id>`` (HLD §5.3)."""
 
