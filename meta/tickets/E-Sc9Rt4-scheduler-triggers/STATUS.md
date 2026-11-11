@@ -227,3 +227,5 @@ the webhook's middleware mounting.
 ## Update 2026-11-11 — test-quality review (w21-05)
 - `T-Se4Bk5` mandatory Opus test-quality review: findings TQ-1..TQ-14 fixed in `b5fe677` (test-only, mutation-checked); open follow-ups FU-1..FU-11, of which 3 are High: no cron/DST engine coverage, a vacuous integration opt-in test needing a monotonic seam, and a nonce-eviction test that doesn't test eviction. See `T-Se4Bk5-security-and-review-gate/TEST-QUALITY.md`. Epic state unchanged.
   By: reviewer · Role: reviewer · Date: 2026-11-11
+
+- 2026-11-11 — By: reviewer (Opus, unit `w35-04-all-final-branch-review`) · Role: reviewer · Date: 2026-11-11 · Comment: final whole-branch review (charter cycle 4) recorded in [`E-Sc9Rt4-scheduler-triggers/REVIEW-final-branch.md`](REVIEW-final-branch.md): 0 Critical, 1 High (H-1 resumed capped run finalised while starting), 8 Medium (M-1 tick-budget starvation/no prune, M-2 daemon starts without scheduler on lock collision, M-3 ledger clock, M-4 watch-glob ReDoS, M-5 stale UI bundle), 11 Low. S-1: R-2c in T-Se4Bk5 is fixed by 55878de/d88df5f but still listed open. Gates: pytest (excl. bench) 11010 passed, ruff/format/mypy clean.

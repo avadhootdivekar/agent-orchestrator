@@ -39,3 +39,5 @@
   - D4 `tests/test_sentinel_lane_permissions.py`: **7 passed**.
   - CTL-SCHEMA note: `tests/test_sentinel_generations.py::test_contract_renders_ctl_envelope_with_valid_examples` (+ contract test): **2 passed** (`-k "ctl or contract or envelope"`, 33 deselected); `tests/test_control_requests.py`: **8 passed**.
   Total 74 passed, 0 failed. Not run: full suite (another wave owns it). Live D4 smoke still unverified.
+
+- 2026-11-11 — By: reviewer (Opus, unit `w35-04-all-final-branch-review`) · Role: reviewer · Date: 2026-11-11 · Comment: final whole-branch review (charter cycle 4) recorded in [`E-Sc9Rt4-scheduler-triggers/REVIEW-final-branch.md`](../../E-Sc9Rt4-scheduler-triggers/REVIEW-final-branch.md): D1/D2/D3/D4/CTL-SCHEMA verified implemented with discriminating tests; no blocker. Follow-ups: M-6 default veto window makes stuck-duration kill unreachable, M-7 incidental denial pauses LLM lane, L-8 spurious cost_cap trip after failure, L-9 wrapped-claude warning, L-10 engine-tier D1 test; D3 fail_fast owner decision and real-claude D4 check still open; overseer-runner-hld.md:688 contradicts D3.
