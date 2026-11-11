@@ -146,6 +146,13 @@ if [ "$install_only" = 0 ]; then
   esac
 fi
 
+# Inference host. Tasks with an offline agent phase (DeepSWE: `[agent] network_mode =
+# "no-network"`) only let through the hosts Harbor allowlists, and Harbor cannot infer the
+# endpoint for an OAuth-token Claude Code login, so it allowlists nothing and every API call
+# fails with ECONNRESET. Allow the API host explicitly for both arms. Nothing else is opened:
+# the task's own policy (and Harbor's automatic web-search disable) still applies.
+args+=(--allow-agent-host "${AO_HARBOR_INFERENCE_HOST:-api.anthropic.com}")
+
 export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"  # makes ao_harbor importable
 case "$arm" in
   cc)

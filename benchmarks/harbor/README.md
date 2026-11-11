@@ -100,7 +100,7 @@ something should help one arm, it goes into the shared parity layer so it helps 
 | Auto memory | off (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`); otherwise ao's later sessions would read earlier sessions' memory |
 | claude.ai MCP connectors | off (`ENABLE_CLAUDEAI_MCP_SERVERS=false`) |
 | Permission mode, autocompact, output style, thinking display, max output tokens | Claude Code defaults in both (`bypassPermissions`; neither arm sets the others) |
-| Web tools | enabled in both (Claude Code default) |
+| Web tools / network | the dataset's own agent network policy, both arms. Public-network tasks (TB 2.1): web tools on (Claude Code default). Offline-agent tasks (DeepSWE: `[agent] network_mode = "no-network"`): Harbor disables web search, and only the inference host is allowlisted (`run.sh` passes `--allow-agent-host api.anthropic.com`, `AO_HARBOR_INFERENCE_HOST` to override; Harbor cannot infer it for an OAuth login and otherwise blocks every API call with ECONNRESET) |
 | Spend cap per benchmark task | `run.sh --budget-usd` (default 20): the plain arm's session gets `claude --max-budget-usd`, the whole ao run (all its sessions) `run_budget_usd`. ao's per-unit `task_budget_usd` (subject, 8) is internal pacing |
 | Wall-clock limit | the dataset's own agent timeout, both arms (leaderboard-comparable); ao's overhead counts against it |
 | Credentials | same env file |
