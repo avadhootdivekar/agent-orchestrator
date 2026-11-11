@@ -1567,7 +1567,8 @@ class ScheduleEngine:
         except RunNotFoundError:
             return  # never started: orphan reconciliation owns it
         status = getattr(state, "status", None)
-        observed = max(g.cost_observed_usd, _observed_cost(state))
+        engine_cost = _observed_cost(state)  # the cap's own metric (G-7)
+        observed = max(g.cost_observed_usd, engine_cost)
         confidence = "actual" if observed > 0 else g.cost_confidence
         killed = status not in (RUN_STATUS_SUCCEEDED, RUN_STATUS_FAILED)
         # M1 (w01-07) / T-lTW88y re-review: a PARTLY blind run (a killed or blind attempt next to
@@ -1575,6 +1576,9 @@ class ScheduleEngine:
         # confidence and charge the ledger's ``run_confidence`` gives it, so the window does not
         # under-charge once ``state.json`` is gone.
         conf = _run_confidence(state)
+        if conf in _CONSERVATIVE_CONFIDENCES and not killed:
+            # G-5: the label does not depend on a cost reservation (quota-only bindings have none).
+            confidence = conf
         if g.reserved_usd is not None and (
             observed <= 0 or killed or conf in _CONSERVATIVE_CONFIDENCES
         ):
@@ -1598,7 +1602,11 @@ class ScheduleEngine:
                 or ((_parse_dt(t.at) or datetime.max.replace(tzinfo=UTC)) > resumed_at)
             )
         ]
-        upd: dict[str, Any] = {"cost_observed_usd": observed, "cost_confidence": confidence}
+        upd: dict[str, Any] = {
+            "cost_observed_usd": observed,
+            "cost_confidence": confidence,
+            "engine_cost_usd": engine_cost,
+        }
         capped = status == RUN_STATUS_FAILED and bool(trips)
         expires: datetime | None = None
         now = self._clock()
@@ -1621,7 +1629,8 @@ class ScheduleEngine:
                 run_id=rec.run_id,
                 cost_usd=observed,
                 cap_usd=cap,
-                overshoot_usd=max(0.0, observed - cap) if cap is not None else 0.0,
+                engine_cost_usd=engine_cost,
+                overshoot_usd=max(0.0, engine_cost - cap) if cap is not None else 0.0,
                 on_cap=g.on_cap,
                 pause_expires_at=expires,
             )

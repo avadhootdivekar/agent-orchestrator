@@ -24,6 +24,7 @@ from agent_orchestrator.schedules.usage_view import (
     governance_fields,
     limit_periods,
     paused_records,
+    paused_row,
     reason_with_period,
     render_usage,
 )
@@ -250,6 +251,19 @@ def test_build_usage_doc_window_rows_paused_and_local_date(tmp_path: Path) -> No
     assert p1["expires_at"] is not None
     assert p2["cap_usd"] is None and p2["overshoot_usd"] == 0.0  # no cap -> no overshoot
     assert p2["paused_at"] is None and p2["expires_at"] is None
+
+
+def test_paused_row_overshoot_uses_engine_cost_metric(tmp_path: Path) -> None:
+    """REVIEW G-7: overshoot is engine_cost - cap; cost_usd stays the (larger) charge."""
+    ws = str((tmp_path / "ws").resolve())
+    rec = _rec(
+        ws, "p1", gov=_paused(cost_observed_usd=5.0, engine_cost_usd=2.5, run_cost_cap_usd=2.0)
+    )
+    row = paused_row(rec)
+    assert row["cost_usd"] == 5.0 and row["engine_cost_usd"] == 2.5
+    assert row["overshoot_usd"] == 0.5
+    legacy = paused_row(_rec(ws, "p2", gov=_paused(cost_observed_usd=3.0, run_cost_cap_usd=2.0)))
+    assert legacy["engine_cost_usd"] == 3.0 and legacy["overshoot_usd"] == 1.0
 
 
 # -- render_usage ----------------------------------------------------------------------------------

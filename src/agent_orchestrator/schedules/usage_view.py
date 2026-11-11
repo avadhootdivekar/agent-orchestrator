@@ -106,13 +106,16 @@ def paused_row(rec: FireIntentRecord) -> dict[str, Any]:
     g = rec.governance
     assert g is not None
     cap = g.run_cost_cap_usd
-    cost = g.cost_observed_usd
+    cost = g.cost_observed_usd  # the charge (may be reserved-inflated / summary-inclusive)
+    # G-7: overshoot is on the cap's own metric; old records without it fall back to the charge.
+    engine = g.engine_cost_usd if g.engine_cost_usd is not None else cost
     return {
         "run_id": rec.run_id,
         "fire_key": rec.fire_key,
         "cost_usd": cost,
+        "engine_cost_usd": engine,
         "cap_usd": cap,
-        "overshoot_usd": round(max(0.0, cost - cap), 6) if cap is not None else 0.0,
+        "overshoot_usd": round(max(0.0, engine - cap), 6) if cap is not None else 0.0,
         "paused_at": _iso(g.paused_at) if g.paused_at else None,
         "expires_at": _iso(g.pause_expires_at) if g.pause_expires_at else None,
     }

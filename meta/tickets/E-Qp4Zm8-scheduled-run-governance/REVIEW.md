@@ -92,7 +92,7 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
 - Next step: override the other mutators to raise (`PermissionError`/`RuntimeError`), and add a unit test
   that each one refuses.
 
-**G-5 (Warning). The retire hook labels a partly blind run `actual` when the binding has no cost reservation.**
+**G-5 (Warning) — FIXED 2026-11-11 (w32-02). The retire hook labels a partly blind run `actual` when the binding has no cost reservation.**
 - Where: `src/agent_orchestrator/service/schedule_engine.py:1571` (`confidence = "actual" if observed > 0 …`). The
   `run_confidence` override applies only inside `if g.reserved_usd is not None and (…)` (`:1578-1584`).
 - Observation: on quota-only bindings (`reserved_usd is None`), a run with `attempts_without_actuals > 0` is persisted
@@ -100,7 +100,8 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
   (`884c167`) only covers bindings that reserve.
 - Why it matters: `usage` and the dashboard confidence flags under-report uncertainty after state cleanup. Charging is
   unaffected, since quota-only bindings have no cost cap.
-- Next step: set `confidence = conf if conf != "actual" else ("actual" if observed > 0 else g.cost_confidence)`
+- Fix: `_finalize_governance_once` now adopts a conservative `run_confidence` (partial) for non-killed runs outside the reservation branch; test `test_g5_quota_only_binding_partly_blind_run_is_persisted_partial`.
+- Next step (was): set `confidence = conf if conf != "actual" else ("actual" if observed > 0 else g.cost_confidence)`
   outside the reservation branch, and add a quota-only partial test.
 
 **G-6 (Warning, DRY). Two cost metrics in the engine gate.** — **FIXED** (2026-11-11, `w32-03`): `compute_run_usage_totals` accepts a `RunState` or an iterable of task states; new `engine.settled_run_cost_usd` (worker-thread-safe `list()` snapshot) is used by both `cost_cap_reached` and `_retry_hits_cost_cap`; agreement test `test_g6_both_gates_share_one_cost_computation` in `tests/test_engine_cost_cap.py`.
@@ -113,14 +114,15 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
 - Next step: let `compute_run_usage_totals` accept an iterable of task states (or a snapshot helper), and call it
   from both sites.
 
-**G-7 (Warning). Overshoot mixes metrics.**
+**G-7 (Warning) — FIXED 2026-11-11 (w32-02). Overshoot mixes metrics.**
 - Where: `src/agent_orchestrator/schedules/usage_view.py:114` and `schedule_engine.py` (`run_cost_capped`
   `overshoot_usd`). Both compute `cost_observed_usd − run_cost_cap_usd`.
 - Observation: `cost_observed_usd` includes the summariser's cost and, for blind/partial runs, the conservative
   `max(observed, reserved)` charge. The cap is the engine metric (L3, `UsageLedger.engine_cost_usd`).
 - Why it matters: the reported overshoot is inflated by summary cost, and for a blind run whose charge is set to
   `reserved` it can be ~0 or misleading. D-5's "overshoot measured per fire and displayed" should use one metric.
-- Next step: compute overshoot from `engine_cost_usd` (the ledger already has `Charge.overshoot_usd` doing this from
+- Fix: new optional `FireGovernance.engine_cost_usd` persisted at finalisation; `run_cost_capped` event gains `engine_cost_usd` and `overshoot_usd` uses it; `paused_row` overshoot uses it (legacy records fall back to `cost_observed_usd`) and exposes `engine_cost_usd` next to `cost_usd` (the charge). Tests `test_g7_*`, `test_paused_row_overshoot_uses_engine_cost_metric`. Followup: `usage_ledger.Charge.overshoot_usd` still uses `observed` (usage_ledger.py was out of scope for this unit).
+- Next step (was): compute overshoot from `engine_cost_usd` (the ledger already has `Charge.overshoot_usd` doing this from
   `observed`), and label summary cost separately.
 
 ### Suggestions / Info

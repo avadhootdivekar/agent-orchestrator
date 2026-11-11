@@ -327,7 +327,7 @@ def put_run(
     at: datetime,
     run_id: str,
     *,
-    reserved: float = 2.0,
+    reserved: float | None = 2.0,
     observed: float = 0.0,
     live: bool = True,
     status: str = "launched",
@@ -1560,3 +1560,44 @@ def test_g2_fire_refused_while_resume_pending(tmp_path: Path) -> None:
     # held: 2 actual + 2 reserved = 4 of 5 -> 1 left < per_run 2
     assert (d.fire, d.reason) == (False, "cost_cap_reached")
     assert d.gate is not None and d.gate.detail["remaining_usd"] == 1.0
+
+
+def _partly_blind_state(status: str = "succeeded") -> RunState:
+    return RunState(
+        run_id="r1", workflow_id="w", started_at=T0.isoformat(), updated_at=T0.isoformat(),
+        status=status,  # type: ignore[arg-type]
+        tasks={
+            "a": TaskRunState(status="succeeded", cumulative_cost_usd=0.4, actuals_available=True),
+            "b": TaskRunState(status="succeeded", cumulative_cost_usd=0.0, actuals_available=False),
+        },
+    )  # fmt: skip
+
+
+def test_g5_quota_only_binding_partly_blind_run_is_persisted_partial(tmp_path: Path) -> None:
+    """REVIEW G-5: no cost reservation (quota-only) must not turn a partly blind run `actual`."""
+    from agent_orchestrator.service.usage_ledger import run_confidence
+
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", reserved=None)
+    st = _partly_blind_state()
+    assert run_confidence(st) == "partial"
+    _retire(env, "r1", st)
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.final and g.reserved_usd is None
+    assert g.cost_confidence == "partial"
+    assert g.cost_observed_usd == pytest.approx(0.4)  # no reservation: charged what was observed
+
+
+def test_g7_overshoot_uses_engine_cost_not_the_reserved_charge(tmp_path: Path) -> None:
+    """REVIEW G-7: a capped run charged max(observed, reserved) reports overshoot on the engine
+    metric (the cap's own), and persists that metric for the paused-row view."""
+    env = gov_env(tmp_path, limits(per_run=2, week=50, ttl=3600))
+    put_run(env, "k1", T0, "r1", observed=5.0)  # high-water charge (reserved / summary inflated)
+    env.clock.now = NOW1
+    _retire(env, "r1", _state("failed", cost=2.3, trips=[trip(NOW1)]))
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.cap_state == "paused"
+    assert g.cost_observed_usd == 5.0 and g.engine_cost_usd == pytest.approx(2.3)
+    (ev,) = env.events("schedule.governance.run_cost_capped")
+    assert ev["cost_usd"] == 5.0 and ev["engine_cost_usd"] == pytest.approx(2.3)
+    assert ev["overshoot_usd"] == pytest.approx(0.3)  # not 5.0 - 2.0
