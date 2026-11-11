@@ -2,7 +2,7 @@
 
 - ID: `T-lTW88y-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: Partial — early + final gate run, all Critical/High closed; NFR-6 delta vs baseline and ADR acceptance open
+- State: Partial. The gate was re-run on the committed tip `5f51452` by w22-03 and PASSED: no Critical/High/Warning is open and the rest is Info. Still unmet: the AC4 delta vs a pre-epic baseline (none was ever recorded) and ADR-0025 acceptance
 - Owner: reviewer (gate `w20-03`, fixes `w21-02`, re-review `w22-03`, Opus)
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
@@ -79,7 +79,32 @@ w21-02 saw was in the shared working tree while other units' edits were in fligh
 `git stash push -- src`. That environmental cause is the most likely explanation. No change.
 
 ### AC4 / NFR-6 gate numbers (committed tip)
-No governance-specific baseline delta exists. Whole-tree numbers are the T-Se4Bk5 gate on `4b9d6a3` (same branch tip as the fixes above): `pytest -q` 12155 passed, 5 failed (2 install-script tests that need a `.git`, auth openapi baseline fixed by `0f7dac0`, 2 bench fake-pass suites outside this epic), 35 skipped, 2 xfailed; `mypy src` 0 errors; `ruff check .`/`ruff format --check .` clean at the later tip after `f4f0fc8`. AC4's delta vs a pre-epic baseline is **not** met (see Reconciliation).
+Every run used a fresh `git clone` checked out at the commit named. None used the shared working tree.
+- **Full `pytest -q` at `5f51452`: 12186 passed, 4 failed, 35 skipped (20m09s).** Triage of the 4 failures:
+  - `tests/auth/test_auth_off_regression.py::test_openapi_differs_by_exactly_the_status_route`: a **real,
+    governance-caused** failure. The auth-off OpenAPI snapshot did not list the new GET routes
+    `/api/schedules/{schedule_id}/usage` and `/api/schedules/governance-events`. It also fails on `4b9d6a3`. It was
+    fixed concurrently by `0f7dac0` (another unit), which added both paths to `PRE_CHANGE_OPENAPI_PATHS`. Both
+    routes are GET-only and authenticated (checklist g).
+  - `tests/auth/test_audit.py::test_four_spawn_processes_write_one_hundred_valid_lines` and
+    `tests/bench/test_blackbox_grader.py::TestGraderHttp` ×2: these **pass in isolation** on both `5f51452` and
+    `4b9d6a3` (15/15 with the auth test excluded). They are load-sensitive multi-process and HTTP tests, and other
+    units' suites were running on the machine at the same time. They are unrelated to governance.
+- Governance suites at `884c167` (`tests/service tests/schedules tests/ui tests/test_engine_cost_cap.py
+  tests/test_run_options.py`): **2297 passed, 2 skipped, 0 failed**. At `5f51452`,
+  `tests/test_e2e_cli_cost_cap.py` passed 9/9.
+- `ruff check src tests` clean. `ruff format --check src tests`: 665 files clean. Whole-tree `ruff check .` had 75 errors,
+  all in `output/…/se4bk5-probes`; they were fixed by `f4f0fc8` (I-8).
+- `mypy src`: clean in the built checkout (233 files). A fresh clone without the generated `_build_info.py` gives 4
+  `no-redef` errors in `_version.py` (I-9, pre-existing).
+- Delta vs the previous gate (`a3d0195` export: 11930 passed, 6 failed): +256 passed. The 2 `tests/bench/test_dev_*_suite`
+  failures from that run no longer fail. No epic-baseline count exists, so a strict delta cannot be stated.
+- Coverage at `5f51452` (1298 tests, service + schedules + the two governance UI files): `schedules/governance.py` 100 %,
+  `schedules/windows.py` 100 %, `service/governance_gate.py` 100 %, `service/usage_ledger.py` 99 %, `service/capped_resume.py`
+  96 %, `schedules/usage_view.py` 97 %. All are ≥ 80 %.
+- **Gate verdict (w22-03): PASS on the security/review content.** No Critical, High or Warning finding is open, and the open items are Info only.
+  AC4's strict "delta vs the epic baseline" stays **unmet**: no pre-epic baseline count was ever recorded (w24-07
+  reconciliation). The T-Se4Bk5 gate on `4b9d6a3` gave 12155 passed / 5 failed.
 
 ### What is still open
 - W-4, I-1, I-6, I-7, I-9 (all Info, owners above). ADR-0025 stays **Proposed** until the epic owner accepts it.

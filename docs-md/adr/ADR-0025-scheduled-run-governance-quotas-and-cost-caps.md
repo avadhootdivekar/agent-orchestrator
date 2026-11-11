@@ -120,6 +120,11 @@ high-water mark can under-report if the run rewrites it), W-4, I-1..I-4. The com
 `usage` / `governance-events` routes were audited (checklist b, g; drop-request schema): three Low findings fixed (F-1
 unbounded `add_usd` without any cost limit, now capped at `MAX_USD`; F-2 unbounded `request_id`/`requested_by` in a drop
 request; F-3 `usage?at=9999-…` returned 500). Details: the T-lTW88y `STATUS.md`.
+Re-review on the committed tip (w22-03): H-1/H-2/W-1 confirmed by mutation; **N-1** (a cancel between retry attempts
+dropped the spent cost) fixed; w01-07 **M1** (retire hook now charges a partly blind run `max(observed, reserved)` like the
+ledger) and **M5** (`ao resume --cost-cap-usd` warns on a schedule-governed run) completed; W-3, I-2, I-3 accepted
+(HLD §13.3); I-4 closed (export artefact). Open, all Info: W-4, I-1, I-6 (blind attempts invisible to the in-task retry
+check), I-7, I-8, I-9.
 
 **Consequence.** The cap is general: it is useful without schedules. The launcher must verify that the flag reached the
 argv, because `_render_options` silently drops unknown keys. It fails closed otherwise.
