@@ -2,9 +2,23 @@
 
 - ID: `T-Hb3Adp-bench-harbor-external`
 - Updated At: 2026-11-11
-- State: **In Progress** (AC1-AC5 done; AC6 blocked: credentials for containers + owner decisions)
+- State: **In Progress** (AC1-AC5 done; AC6 pilot running: plain arm verified, ao arm fixes in test)
 
 ## This update
+- By: Claude · Role: developer · Date: 2026-11-11 · Comment: first LLM pilot (host-login auth).
+  - Oracle 5/5 PASS (TB 2.1 dna-assembly, make-mips-interpreter, regex-chess; DeepSWE sqlfmt, koota).
+  - Plain Sonnet 5.5 on `dna-assembly`: reward 1.0, $0.25, 1.9 min. Per-job secrets files deleted after each job.
+  - ao arm defects found and fixed: (1) `ao-bench` needs `benchmarks/schemas/`, which the wheel does not package
+    -> uploaded to the installed package's expected path; (2) ao confines repos to the workspace root, and `/app`
+    sat outside `/tmp/ao-harbor-ws` (`Path escapes workspace root: /app`; `/` cannot be a root either) -> the
+    task dir is moved into `/ao-ws/repo` with a symlink at its path, restored before grading.
+  - Owner ask: ao arm in local workspace-only mode, no git changes -> shared prompt line (both arms),
+    `init_git: false`, explicit `branch_policy` for overseer's git-branch-off (a deterministic no-git mode is
+    E-Rr5Lnc `T-Ng1Wsp`).
+  - `run.sh` builds the ao wheel from a clean `git archive` of `AO_WHEEL_REF` (default HEAD) so a live ao run
+    committing in this checkout never leaks into the ao under test.
+  - Direction change: TB 2.1 near saturated for Sonnet 5.5 / Opus 5.5; DeepSWE calibration continues in
+    `T-Dw5Cal-deepswe-calibration-and-comparison`.
 - By: avadhoot · Role: user · Date: 2026-11-11 · Comment: decisions. Spend: match the whole-run total, not ao's
   per-subtask cost ("if the ao run gets $100, the Claude run gets $100"). Timeout: the dataset's own, both arms.
   Web tools: enabled in both. Pilot: Sonnet, cc + ao, 2 Terminal-Bench 2.1 + 2 DeepSWE tasks.

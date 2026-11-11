@@ -40,6 +40,7 @@
 - [x] `T-Cb8Rk2-bench-calibrate-and-rank` — pre-registered difficulty calibration (anchors haiku/opus) and a haiku/sonnet/opus/ao-overseer-sonnet ranking campaign with report; skills `bench-tune`, `bench-campaign-report`.
 - [x] `T-Pf4Mix-bench-task-portfolio` — Go/Node toolchains, Exercism provider/grader/importer (visible-tests default), families order-book / rules-engine / bug-hunt / algo-puzzle / algo-hard, `ao-bench portfolio`; finding: spec-complete tasks saturate, hidden-test spread = convention recall (`docs-md/benchmark-task-portfolio.md` §8).
 - [~] `T-Hb3Adp-bench-harbor-external` — external benchmarks through Harbor (TB 2.1, DeepSWE, SWE-Marathon, ...): `CcAgent`/`AoAgent`, `ao-bench exec-subject|harbor-prompt|harbor-parity`, input parity layer, `benchmarks/harbor/` setup/run/summarize + README.
+- [~] `T-Dw5Cal-deepswe-calibration-and-comparison` — DeepSWE v1.1 calibration (Sonnet 5.5 regression set + unsolved grading set, $100), verified plain-vs-ao comparison, then SWE-Marathon (follow-on of `T-Hb3Adp`; TB 2.1 near saturated for current models).
 - [~] `T-Ga4Rna-bench-game-arena` — games plugin (`bench/games/`: Othello, Connect-K, Breakthrough), reference bots, referee + Elo rating, `arena` grader, `game-arena` / `game-arena-heldout` families (follow-on of `T-Os5Lad`; design `docs-md/benchmark-game-arena-design.md`).
 
 ## Risks and Dependencies

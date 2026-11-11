@@ -1,11 +1,15 @@
 # STATUS
 
 - ID: `E-Bn7Dsc-discriminating-benchmark-suites`
-- Updated At: 2026-10-24
+- Updated At: 2026-11-11
 - State: **Done** (6/6 tracks; follow-ons in HLD §12) · `T-Ws7Iso-bench-env-isolation` **Done** (2026-10-24)
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-11-11 · Comment: **Follow-on `T-Dw5Cal-deepswe-calibration-and-comparison`
+  opened** (owner ask: DeepSWE first pass for a solved regression set + unsolved grading set, $100; then the
+  verified plain-vs-ao comparison; SWE-Marathon after). TB 2.1 is near saturated for current models (Vals:
+  Opus 5.5 87.6 %, Sonnet 5.5 83.2 %), so it is no longer a primary suite.
 - By: Claude · Role: developer · Date: 2026-11-11 · Comment: **Follow-on `T-Hb3Adp-bench-harbor-external` opened
   and harness landed** (owner ask: third-party benchmarks, plain Sonnet/Opus vs ao overseer, same net input,
   ~$1000). LLM pilot waits on container credentials + owner decisions (see the task STATUS).
