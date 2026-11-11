@@ -158,3 +158,42 @@ Base: `19b17db` on `ad/enhancements-10nov`. Regression tests: `tests/service/tes
 | S-6 | No change needed | The `else 10` fallback no longer exists at HEAD; `spec.rate_per_minute` is used directly. |
 | S-7..S-9 | Unchanged | Documented limitations. |
 | S-8, S-10 | Still open | uvicorn header-deadline contract test; `cost_cap_usd` in `ALLOWED_OPTIONS` (another unit's uncommitted work is in the tree; re-verify when it lands). |
+
+## Threat-model delta (AC7 / AC7a) — w23-05, 2026-11-11
+
+**What an attacker can do after this epic that they could not before.** Before this epic nothing ran
+without a human at `ao run`. Now a workspace that the operator has opted in
+(`ao service add --schedules`; `WorkspaceEntry.schedules` defaults to `false`) has its `.ao/schedules.yaml`
+evaluated by `ao service run`, and a matching trigger launches a run with no human present. An attacker who
+can write that file or the workflow it names, or who holds a webhook secret, can therefore cause runs to start
+on a timer or on demand. **What they get is bounded to what a repo-authored workflow could already do.** The
+schedule file adds no argv surface: `run_args` is the closed `SCHEDULE_RUN_ARG_NAMES` subset (no `sentinel.llm.*`,
+no `sentinel.max_parallel_ceiling`, no `cost_cap_usd`, no `run_id`), `template` must be a bare name, every path is
+workspace-relative and root-checked, and no schedule module spawns a subprocess (all launches go through
+`ui/processes.py`). **But the workflow itself is the dangerous part.** Workflow hooks (`hooks.py`,
+`HookSpec.command`) are arbitrary argv, and agent tool permissions let an agent run commands, edit files and use
+the network. A schedule runs those on a timer with nobody watching, so a hostile or compromised workflow in an
+opted-in workspace becomes unattended code execution with the service user's privileges, repeated at the
+schedule's cadence; the governance gate's caps (E-Qp4Zm8) bound spend and rate, not behaviour. The webhook adds
+one new network-reachable class, default off and on its own port: a delivery with a valid HMAC can fire the bound
+schedule only (it cannot choose the workflow, args or paths); unknown-schedule and bad-signature answers are
+byte-identical; a leaked secret allows firing, rate-limited and replay-bounded (`ao` scheme: 300 s window; `github`
+scheme: nonce cache only, S-7).
+
+**Trust boundary, confirmed.** `ao service add` (with `--schedules` for scheduling, plus an explicit webhook
+listener and secret for webhooks) is still the only trust boundary: registering a workspace means trusting its
+workflows and hooks. **The epic's claim holds with one correction:** the exposure is not "no new class apart from
+the opt-in webhook" but "unattended execution of already-trusted workflow content" for every opted-in workspace,
+which is why the opt-in defaults to `false` (ADR-0014 D9). Roadmap §3.1 (authentication, authorization and an
+audit trail on triggers) remains open; the HMAC is one endpoint's minimum, not that framework.
+
+**AC7a (webhook vs dashboard auth).** Confirmed by reading `service/webhook.py`'s app factory: the webhook app is
+a separate listener with its own middleware stack and no session `AuthMiddleware` (HMAC is its authentication; a
+machine caller has no login). The dashboard schedule routes (`ui/service.py`) are plain routes on the dashboard
+app and are covered by session auth when it is enabled, i.e. authenticated by omission, as `T-Ap1Xs3` AC14a
+requires.
+
+## w23-05 status of the remaining acceptance criteria
+
+See STATUS.md ("w23-05 closeout"). AC7 done (above). AC14 UI/coverage evidence recorded there. AC16 synced.
+R-2 is still open, so the task is not Done.

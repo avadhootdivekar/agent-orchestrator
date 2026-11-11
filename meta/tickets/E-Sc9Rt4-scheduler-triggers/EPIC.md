@@ -169,7 +169,7 @@
 - [~] `T-Ap1Xs3-dashboard-schedules` — 5 UI routes + typed errors + React panel (FR-14) — 3 d — implemented 2026-11-11, awaiting review
 - [~] `T-Te3Qw8-integration-e2e-suite` (per-trigger e2e tier landed, 11 tests; rest open) — cross-module integration + `CliRunner` e2e tiers
   (all FRs, NFR-1, NFR-2, NFR-4) — 3 d
-- [ ] `T-Se4Bk5-security-and-review-gate` — `dev-security` audit of the untrusted-file and
+- [~] `T-Se4Bk5-security-and-review-gate` (2026-11-11: S-1..S-10 closed, REVIEW.md done, AC7/AC16 done, AC14 UI + coverage evidenced; **not Done: R-2 high open, fix unit w23-01**) — `dev-security` audit of the untrusted-file and
   webhook surfaces + `reviewer` architecture pass + NFR-6 re-verification (NFR-3, NFR-6) — 2 d
 - [~] `T-Dc6Zr2-docs-refresh` (partial 2026-11-11: HLD §21-23, ADR, LLD, README, ROADMAP, ai-epics, guide done; epic close-out blocked on T-Se4Bk5) — reconcile `docs-md/` + ADR-0014 + ROADMAP §1/§3.2 with what was
   actually built, including deviations (all) — 2 d
@@ -229,7 +229,7 @@ All were **applied** (none rejected); ADR-0014 carries the matching "Late-gate c
 
 | # | Sev | Applied in |
 |---|---|---|
-| F1 | blocker | `T-Ri7Dz2` AC2/3/3a/4/9/9a (explicit `launch_run(run_id=)`, registry `Option`, allow-list unchanged, atomic reservation, `new_run` seam, `derive_launch_status`); `T-Lp4Wt6` AC3/AC8; `T-Se4Bk5` AC2/AC6; FR-8 + Scope-Out here; HLD §3.3/§6.6/§7.2; ADR D6 |
+| F1 | blocker | `T-Ri7Dz2` AC2/3/3a/4/9/9a (explicit `launch_run(run_id=)`, registry `Option`, allow-list unchanged, atomic reservation, `new_run` seam, `derive_launch_status`); `T-Lp4Wt6` AC3/AC8; `T-Se4Bk5` AC2 (wording superseded 2026-11-11: `cost_cap_usd` is now in the registry-derived `ALLOWED_OPTIONS`, deliberately, and still not a schedule `run_args` name)/AC6; FR-8 + Scope-Out here; HLD §3.3/§6.6/§7.2; ADR D6 |
 | F2 | blocker | `T-Ev3Qm5` AC1/AC7/AC17a; `T-Lp4Wt6` AC1/AC4; `T-Te3Qw8` AC8a; HLD §6.1/§6.4/§7.2 |
 | F3 | high | `T-Sd1Kq7` AC2; `T-Lp4Wt6` AC8; `T-Se4Bk5` AC1; NFR-3; HLD §3.3/§5.1.1; ADR D9 |
 | F4 | high | `T-Sd1Kq7` AC3/AC4; `T-Lp4Wt6` AC5/AC12; `T-Se4Bk5` AC1/AC5; HLD §13.3 |

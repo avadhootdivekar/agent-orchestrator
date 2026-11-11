@@ -480,3 +480,19 @@ Checked against the code on `ad/enhancements-10nov`; D1-D10 headings are not rew
    D5 (overlap `skip` default), D10 (drop directory for run-now). The webhook HMAC does **not** close roadmap §3.1
    (authentication/authorization on triggers, audit trail); that remains the highest-priority open item.
 
+## Late-gate corrections (2026-11-11, T-Se4Bk5 closeout)
+
+1. **Threat-model delta (D9/NFR-3), as required by the security gate.** After this epic, an opted-in workspace
+   (`WorkspaceEntry.schedules`, default `false`, set by `ao service add --schedules`) runs its workflows on a timer with
+   no human present. The schedule file adds no argv surface, but workflow hooks (`HookSpec.command`) and agent tool
+   permissions already allowed arbitrary commands, so the new exposure is *unattended execution of already-trusted workflow
+   content*, not a new injection class. The opt-in webhook (own listener, HMAC) is the only new network-reachable class
+   and can only fire the bound schedule. `ao service add` remains the sole trust boundary. Governance caps bound spend and
+   rate, not behaviour. Roadmap §3.1 stays open. Full paragraph: `meta/tickets/E-Sc9Rt4-scheduler-triggers/T-Se4Bk5-security-and-review-gate/SECURITY.md`.
+2. **Superseded wording:** the original gate criterion "`ALLOWED_OPTIONS` / `ALLOWED_BOOL_OPTIONS` unchanged" (T-Se4Bk5 AC2)
+   no longer holds: the governance epic added `cost_cap_usd` to the registry-derived `ALLOWED_OPTIONS`. It is deliberate and
+   guarded; `cost_cap_usd` and `run_id` are still not in `SCHEDULE_RUN_ARG_NAMES`, so a schedule file cannot set either.
+3. **Status:** the gate is not closed. R-2 (fire-record cost marks written by dashboard/CLI usage views without a lock,
+   contradicting the single-writer assumption behind the at-most-once store) is open and owned by w23-01. D3 itself is not
+   changed by it: at-most-once ordering was re-verified intact.
+

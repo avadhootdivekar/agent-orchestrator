@@ -2,7 +2,7 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress (S-1..S-10 closed or limitation; REVIEW.md AC6/AC8-AC13 done with R-2 (high) open; AC7, AC14 UI/coverage, AC16 not done)
+- State: In Progress (security + architecture review done; AC7 done, AC14 UI + coverage evidenced, AC16 synced; **R-2 (high) still open — NOT Done**; unit w23-01 owns the R-2 fix)
 - Owner: reviewer agent (overseer w20-02)
 
 ## This update
@@ -126,3 +126,30 @@
 
 - 2026-11-11 (tester, w23-03): TEST-QUALITY FU-1 and FU-2 closed (commit 5e118bc). Engine DST tests: tests/service/test_schedule_engine_dst.py. FU-3..FU-11 remain open.
 - 2026-11-11 (tester, w23-04): TEST-QUALITY FU-5, FU-6, FU-7 done; FU-9 partly (concurrency, secret_file oversize/FIFO, listener recv); FU-8, FU-10, FU-11 deferred with reasons in TEST-QUALITY.md. FU-3/FU-4 still open.
+
+## w23-05 closeout
+- By: developer agent (w23-05-a1-security-gate-closeout) · Role: developer · Date: 2026-11-11 · Docs only, no code changed.
+- **AC7 done.** Threat-model delta paragraph and the AC7a webhook-vs-dashboard-auth confirmation are in
+  [`SECURITY.md`](SECURITY.md) ("Threat-model delta") and in ADR-0014 "Late-gate corrections (2026-11-11, T-Se4Bk5 closeout)".
+  It names workflow hooks, agent tool permissions and the `schedules` opt-in flag, and confirms `ao service add` as the
+  trust boundary, with one correction: the new exposure class is unattended execution of already-trusted workflow content.
+- **AC14 UI + coverage evidence (real runs, this tree, 2026-11-11):**
+  - `make ui-typecheck` (`tsc -b --noEmit`): exit 0, no errors.
+  - `make ui-test` (vitest): 72 files, **915 passed**, 0 failed.
+  - `uv run pytest -q tests/service tests/schedules --cov=agent_orchestrator.schedules --cov=agent_orchestrator.service`:
+    first run **1289 passed, 4 failed** (3 in `test_schedule_engine_dst.py`, 1 in `test_service_schedule_integration.py`); the
+    tree had other units' uncommitted edits in `src/` (R-2 area: `fire_store`, `usage_view`, `schedule_engine`, `webhook`) while
+    it ran. Re-running those two files alone: **40 passed**. I read the 4 failures as transient interference from
+    concurrent edits, not as a defect I could attribute, but I did not isolate the cause.
+  - Coverage of that run (floor 80 %, 90 % for `webhook.py`): `webhook.py` 97 %, `schedule_engine.py` 95 %,
+    `fire_store.py` 99 %, `schedule_launch.py` 96 %, `watch.py` 96 %, `statefile.py` 96 %, `schedules/cli.py` 94 %,
+    `schedules/models.py` 98 %, `schedules/store.py` 93 %, `schedules/usage_view.py` **78 % (below the 80 % floor; follow-up)**.
+    Aggregate for the two packages 96 %.
+  - Whole-tree `pytest -q`, `ruff` and `mypy src` were **not** re-run by this unit: the shared tree is dirty with other
+    units' edits, so a whole-tree number would not describe committed code. The last clean numbers are the w22 ones above.
+- **AC16 synced:** EPIC.md and the epic STATUS.md updated; ADR-0014 gained a late-gate section. AC2's wording
+  "`ALLOWED_OPTIONS` unchanged" is **superseded**: `cost_cap_usd` was added to the registry-derived `ALLOWED_OPTIONS` by the
+  governance epic. It is deliberate and guarded (still not in `SCHEDULE_RUN_ARG_NAMES`, so a schedule file cannot set it).
+- **Still open:** R-2 (high; fire-record cost-mark writes from dashboard/CLI usage views are unlocked) — fix owned by
+  unit **w23-01**; re-verify after it lands, then this task can be marked Done. Also open: R-3, R-4 (handed), FU-2..FU-11
+  residue, `usage_view.py` coverage 78 %, whole-tree gate re-run on a clean tree.
