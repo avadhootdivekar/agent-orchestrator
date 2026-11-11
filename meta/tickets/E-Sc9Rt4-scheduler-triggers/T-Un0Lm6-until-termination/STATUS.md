@@ -25,7 +25,7 @@
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
-- State: **Implemented — awaiting review (all 14 ACs met, no independent review recorded)**
+- State (history, w24-07 snapshot; superseded by the header State on line 5): **Implemented — awaiting review (all 14 ACs met, no independent review recorded)**
 - ACs 1-14 met per the task record: AC13 (LoopSpec contrast) and AC14 (coverage 100 % statements/0 partial branches of the until code at `76ca870`) landed in w18-03/w19-03. The `## Unfinished` list in this file is superseded.
 - **Why not Done**: no review pass of `until` is recorded (only the T-Se4Bk5 gate touched it indirectly).
 - Deviation: termination is recorded in `ScheduleState` + event log; no suppressed fire record is written (no instant is burned).
@@ -82,4 +82,4 @@
 - Independent Opus review recorded in `REVIEW.md` (HEAD `57c8de4`, clean worktree; service+schedules 1352 passed, mypy clean).
 - Verdict: **Not Done.** M1 (major): `ao schedule enable` / dashboard Enable cannot restart a `completed` schedule while the engine runs (engine holds `engine.lock` for its lifetime; same-process flock also conflicts) — AC4 works only with the service stopped.
 - Should fix: W1 `until_unreadable` emitted every 15 s eval (no de-dup); W2 `max_runs` counts launches, not fires (wording). Minor: m1 `--until-equals=--5` uncaught ValueError; m2 AC6 text vs HLD; m3 gate read not via `read_regular_file`; m4 stale `queued_*` after completion.
-- State stays **Implemented — awaiting fixes (M1)**.
+- (History, w26-07 review; superseded by the header State on line 5) State stayed **Implemented — awaiting fixes (M1)**.

@@ -7,6 +7,9 @@
 
 > **Update 2026-11-11 (reviewer, unit `w28-02-a1-until-rereview`):** `T-Un0Lm6` re-reviewed after `ed84cb4` and marked **Done**. Rollup now **10 Done / 4 NOT Done**; the table below has that row updated, and its other rows are unchanged.
 
+## Task count: charter said 16, 14 exist (w34-03, developer; docs only)
+The charter's ask A1 says "All 16 tasks"; `EPIC.md` and the directory contain **14** task dirs (no 15th/16th ticket was ever created; the "16" appears to be a charter miscount). Present: `T-Sd1Kq7`, `T-Fr2Nx8`, `T-Ev3Qm5`, `T-Ri7Dz2`, `T-Lp4Wt6`, `T-Cl6Jn9`, `T-Fw8Gp4`, `T-Sv5Hb3`, `T-Wh9Kv1`, `T-Un0Lm6`, `T-Ap1Xs3` (each header State: Done) and the three marked unfinished in their tickets: `T-Te3Qw8` (Partial), `T-Se4Bk5` (In Progress), `T-Dc6Zr2` (Partial). Note: counting the task headers gives 11 Done / 3 NOT Done, while the rollup line above says 10 / 4; the per-task headers are the primary record and the rollup count is not yet reconciled with them (not changed here). Stale leftover `- State:` lines in `T-Ap1Xs3`, `T-Sv5Hb3`, `T-Un0Lm6` (two) and `T-Wh9Kv1` are now labeled as history.
+
 ## Rollup 2026-11-11, re-synced after waves 25-26 (w27-02, developer; docs only, branch `ad/enhancements-10nov`, HEAD `c4e3871`)
 This table is the authoritative rollup and matches `EPIC.md`'s Task List and each task's `STATUS.md`/`TASK.md` header. It supersedes the w24-07 table below (kept as history). **14 tasks: 9 Done, 5 NOT Done. Epic NOT closed.**
 
