@@ -1592,7 +1592,7 @@ original text would trip on.
 | T-Sv5Hb3 service integration | Partial | AC10 (status fallback) |
 | T-Wh9Kv1 webhook | Partial | AC7/AC8 github-scheme replay bound (S-7: replay across restart is an accepted limitation); AC1 combined-auth test; L4 caching accepted |
 | T-Un0Lm6 `until` | Implemented, awaiting review | no independent review recorded |
-| T-Ap1Xs3 dashboard | Implemented, awaiting review | no review recorded; AC18 full-suite figure only in the unit report |
+| T-Ap1Xs3 dashboard | Done (review w26-08) | AC18 verified in task `REVIEW.md`; non-blocking: W-2 inert-workspace run-now notice, W-3 CLI/UI duplication |
 | T-Te3Qw8 e2e suite | Partial (`tests/schedules/test_e2e_schedules.py`, commit `9f84c1e`) | AC6, AC8a, AC17 clean-tree delta; AC18 not-exercised list |
 | T-Se4Bk5 security/architecture gate | **In Progress, NOT Done** | whole-tree gate (pytest/ruff/mypy) not re-run on a clean tree; TEST-QUALITY FU-8/9/10/11 partly deferred; Opus re-verify (`REVIEW.md`) still open on R-2b (resume-queue writer) and GATE-1. R-2/R-3/R-4 closed; `usage_view.py` coverage now 100 % |
 | T-Dc6Zr2 (this reconciliation) | Partial | docs reconciled with landed code (this section re-synced w25-06 from the epic `STATUS.md`, which is authoritative); closing the epic needs T-Se4Bk5 |

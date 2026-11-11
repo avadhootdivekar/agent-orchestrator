@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-11 (implemented, w15-05; see STATUS.md)
-- Status: Implemented — review in progress (w26-08), NOT Done (synced w27-02)
+- Status: Done (review w26-08, see REVIEW.md; non-blocking follow-ups W-2/W-3 in STATUS.md)
 - Estimate: 3 days
 
 ## Requirements Mapping

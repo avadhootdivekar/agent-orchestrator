@@ -166,13 +166,13 @@
 - [x] `T-Wh9Kv1-webhook-ingress` — `service/webhook.py`, listener app, `WebhookScheduler` (FR-12,
   NFR-3) — 3 d — **Done (w26-06: AC7/8 github replay gate + AC1 combined auth test); accepted limitation: nonces not persistent (S-7)**
 - [~] `T-Un0Lm6-until-termination` — `until` evaluation + `completed` lifecycle (FR-13) — 2 d — **Done — w27-01 fixes (`ed84cb4`) re-reviewed w28-02: M1/W1/W2/m1/m4 fixed; open non-blocking: m2 (AC6 wording), m3, n1-n4**
-- [~] `T-Ap1Xs3-dashboard-schedules` — 5 UI routes + typed errors + React panel (FR-14) — 3 d — **NOT Done — implemented (ACs 1-18); review w26-08 in progress (REVIEW.md still a draft): W-1 completed-schedule enable under a running daemon, W-2 inert-workspace run-now notice open**
+- [x] `T-Ap1Xs3-dashboard-schedules` — 5 UI routes + typed errors + React panel (FR-14) — 3 d — **Done (review w26-08: all ACs Met, no Critical; W-1 fixed by `ed84cb4`; W-2/W-3 non-blocking follow-ups)**
 - [~] `T-Te3Qw8-integration-e2e-suite` — cross-module integration + `CliRunner` e2e tiers
   (all FRs, NFR-1, NFR-2, NFR-4) — 3 d — **NOT Done — Partial: AC6, AC8a, AC17 (clean-tree gate), AC18 not-exercised list open**
 - [~] `T-Se4Bk5-security-and-review-gate` — `dev-security` audit of the untrusted-file and
   webhook surfaces + `reviewer` architecture pass + NFR-6 re-verification (NFR-3, NFR-6) — 2 d — **In Progress, NOT Done: R-2/R-2b/GATE-1/usage_view coverage/FU-8..11 closed; clean-tree whole-gate re-run + REVIEW.md update still open**
 - [~] `T-Dc6Zr2-docs-refresh` — reconcile `docs-md/` + ADR-0014 + ROADMAP §1/§3.2 with what was
-  actually built, including deviations (all) — 2 d — **NOT Done — Partial: HLD re-synced (w25-06); epic close-out blocked on T-Se4Bk5/T-Te3Qw8/T-Un0Lm6/T-Ap1Xs3**
+  actually built, including deviations (all) — 2 d — **NOT Done — Partial: HLD re-synced (w25-06); epic close-out blocked on T-Se4Bk5/T-Te3Qw8 (T-Un0Lm6, T-Ap1Xs3 now Done)**
 
 **Total: 14 tasks (the overseer charter's "16 tasks" was wrong; F19), 32 person-days across 3 sprints. See `STATUS.md` for the capacity math and sprint
 assignment.**

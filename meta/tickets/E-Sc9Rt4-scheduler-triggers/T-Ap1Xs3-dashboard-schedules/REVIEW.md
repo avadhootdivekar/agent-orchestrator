@@ -12,14 +12,13 @@
 
 ## Summary
 
-The backend is a clean, small, well-tested thin-adapter design: four plain-Python service methods with
+(Draft written at `defa662`; finalised after re-checking the tip `69dd4c0`.) The backend is a clean, small, well-tested thin-adapter design: four plain-Python service methods with
 no framework imports, a typed `ScheduleApiError` hierarchy mapped by `exc.status_code`, five ≤5-line
 routes, literal route registered first, run-now only writes the HLD §6.9 request file. All ACs are
-implemented and the claims in STATUS.md reproduce. There are **no Critical findings**. Two Warnings are
-real operator-facing gaps that should be fixed before the panel is promoted to the live engine:
-enabling a `completed` schedule cannot work while a daemon is running (and the error says "retry"),
-and *Run now* reports "queued" for a workspace whose schedules the daemon will ignore. A third Warning
-is triplicated CLI logic that has already started to drift.
+implemented and the claims in STATUS.md reproduce. There are **no Critical findings**. Of the three Warnings, W-1 (enabling a `completed` schedule
+was impossible while the daemon ran, with a "retry" message) was fixed meanwhile by `ed84cb4`; W-2 (*Run now*
+reports "queued" for a workspace whose schedules the daemon will ignore) and part of W-3 (duplicated CLI logic)
+remain as should-fix follow-ups.
 
 ## AC verification (in code + re-run)
 
@@ -54,7 +53,22 @@ test). That run was therefore **not green**, which the report stated honestly.
 
 Re-verified by this review on a clean worktree at `defa662` (2026-11-11):
 
-AC18_RESULT_PLACEHOLDER
+- Full `pytest -q` (clean worktree, no xdist, 21m35s): **12265 passed, 11 failed, 32 skipped**. **None of the
+  11 is in a file this task touched**, and none reproduces as a product defect:
+  - 9 are load/timing-sensitive and **pass when re-run in isolation**: `tests/bench/test_blackbox_grader.py`
+    (8: the reference HTTP subject dropped connections under full-suite load, `RemoteDisconnected` at perf size
+    500) and `tests/auth/test_audit.py::test_four_spawn_processes_write_one_hundred_valid_lines` (99 of 100
+    lines under contention).
+  - 2 fail **only in the detached worktree** and pass in the real checkout:
+    `tests/bench/test_dev_core_suite.py` / `test_dev_medium_suite.py::test_fake_subject_full_suite_run_produces_valid_run_json_and_summary`
+    (`solved 0/6` in the worktree; `uv run pytest` of the same test in `agent-orchestrator/` → 1 passed). The
+    worktree has no git-ignored generated files (same cause as the `_build_info.py` mypy note below).
+  - Delta vs the w15-05 figure: +500 passed (other tasks' tests landed since); the earlier 5 cost-cap failures
+    are gone. So the AC18 "green" bar is met for this task's surface; the remaining suite reds are unrelated
+    flakes/env artifacts, recorded here rather than hidden.
+- Re-checked at the later tip `69dd4c0` (after `ed84cb4` touched `ui/service.py`): `tests/ui/test_schedules_api.py`
+  + `tests/auth/test_schedules_auth.py` + `tests/auth/test_auth_off_regression.py` + `tests/service/test_until.py`
+  → **109 passed**.
 
 - Targeted: `tests/ui/test_schedules_api.py` + `tests/auth/test_schedules_auth.py` +
   `tests/auth/test_auth_off_regression.py`: **54 passed**.
@@ -71,6 +85,11 @@ AC18_RESULT_PLACEHOLDER
 None.
 
 ## Warnings (should fix before promoting to the live engine)
+
+> **Status update (same review, re-checked at `69dd4c0`): W-1 is FIXED** by `ed84cb4` (T-Un0Lm6 M1): a shared
+> `service.schedule_engine.restart_completed_schedule` applies the reset directly when no engine runs, else drops
+> a `restart_completed` request the engine applies at its next tick; `ui/service.py` now calls it, and its private
+> lock copy is gone (W-3(b) resolved). Residual nit S-7 below. Original finding kept for the record:
 
 **W-1 — Enabling a `completed` schedule is impossible while the daemon runs, and the 409 says "Retry in a
 moment".** `ui/service.py` `_restart_completed` takes `engine.lock` non-blocking; the service daemon takes that
@@ -93,7 +112,7 @@ registered workspace with `schedules: false` shows its schedules, accepts *Run n
 `inert_reason: str | null` field to `list_schedules`, render it in the warning banner, and include it in the
 run-now 202 body so the notice can say "queued, but this workspace's schedules are inert: …".
 
-**W-3 — CLI logic copied three times into `ui/service.py`, already drifting.** (a) the `enabled`-flip `apply`
+**W-3 — CLI logic copied three times (now twice: (b) resolved by `ed84cb4`; (a) and (c) still open) into `ui/service.py`, already drifting.** (a) the `enabled`-flip `apply`
 closure = `schedules/cli.py` `_set_enabled`; (b) the engine-lock try-lock = `_hold_engine_lock`; (c) the
 run-now request body/path = `_queue_request`. Drift is visible: the 409/CLI messages differ (W-1), and CLI
 `enable` emits `schedule.enabled` without the `requested_by` field while the UI includes it.
@@ -115,6 +134,9 @@ run-now request body/path = `_queue_request`. Drift is visible: the 409/CLI mess
   poll that shows a new `last_fire_at`.
 - **S-5 AC6 test gap.** No test proves `SecurityMiddleware` rejects a cross-origin or non-JSON-bodied POST to
   `/api/schedules/{id}/{enable,disable,run-now}`; one parametrised test would pin AC6.
+- **S-7 `restarted: true` conflates "applied" with "queued".** Since `ed84cb4`, `set_schedule_enabled` ignores the
+  bool returned by `restart_completed_schedule`; return `restart: "applied" | "queued" | null` so the panel can say
+  "will restart at the next engine tick" instead of implying it already happened.
 - **S-6** No `force` affordance in the UI (disclosed in STATUS.md) — fine for now; record as a follow-up if
   operators need it.
 
@@ -136,7 +158,7 @@ auth tests + vitest. Concurrency — yaml via the store's locked `mutate`; `stat
   drained by a real `ScheduleEngine` evaluate (belongs in `T-Te3Qw8`'s e2e tier); W-2 inert-workspace case once
   implemented.
 
-## Doc fix made by this review (trivial, docs only)
+## Doc fix made by this review (trivial, docs only — landed via `a67c9de`)
 
 `docs-md/scheduler-triggers-hld.md` §11 described the pre-F17 panel (`View` union + ternary arm, hand-rolled
 `setInterval`, "surfaces `GET /api/launches` which has no UI"). Corrected to the shipped tab-model registration,
@@ -145,7 +167,13 @@ sentence is also stale since ADR-0021 added optional session auth; left for `T-D
 
 ## Done / not-Done
 
-DONE_PLACEHOLDER
+**T-Ap1Xs3 can be marked Done.** Every AC (1-18, 14a) is met in code and re-verified by test runs above;
+the AC18 figure is verified and recorded; there are no Critical findings; W-1 (the only finding that made an AC
+behaviour unusable in practice) has since been fixed and re-verified at `69dd4c0`.
+
+Open, non-blocking follow-ups (should fix before the panel is promoted to the live engine, tracked in
+STATUS.md "Next actions"): **W-2** (inert-workspace run-now/warning), **W-3** (a)+(c) CLI/UI duplication,
+S-1..S-7. The live engine/UI is unchanged until a human runs the install flow (by design).
 
 ## Pre-submit checklist
 

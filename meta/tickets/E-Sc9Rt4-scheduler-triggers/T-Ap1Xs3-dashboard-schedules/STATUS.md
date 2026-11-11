@@ -2,8 +2,24 @@
 
 - ID: `T-Ap1Xs3-dashboard-schedules`
 - Updated At: 2026-11-11
-- State: Implemented — NOT Done: review w26-08 in progress (REVIEW.md is an uncommitted draft; W-1/W-2 open)
+- State: **Done** (review w26-08 recorded in `REVIEW.md`; non-blocking follow-ups W-2, W-3(a)(c), S-1..S-7 open)
 - Owner: developer agent (overseer unit w15-05-a1-dashboard-schedules)
+
+## Review outcome — By: reviewer agent (Opus) · Role: reviewer · Date: 2026-11-11 · unit `w26-08-a1-dashboard-review`
+- Comment: `REVIEW.md` finalised and committed. **Done.** All ACs 1-18 (+14a) Met; no Critical.
+- AC18 figure (clean worktree at `defa662`): full `pytest -q` **12265 passed, 11 failed, 32 skipped** — none of the 11
+  in this task's files (9 load-sensitive bench/audit tests pass in isolation; 2 bench tests fail only in a detached
+  worktree and pass in the checkout). Targeted schedules API/auth tests 54 passed; the eight schedule methods at
+  **100 %** statement coverage; `ruff`/`ruff format` clean; `mypy src` clean for this task (4 worktree-only
+  `_version.py` errors from the missing generated `_build_info.py`); `tsc -b` clean; vitest **915 passed**;
+  `npm run build` reproduces the committed `ui/static/` byte-identically. Re-check at tip `69dd4c0`: 109 passed
+  (schedules API/auth + `test_until.py`).
+- W-1 (completed-schedule enable under a running daemon) **fixed** by `ed84cb4` (shared engine-routed
+  `restart_completed_schedule`), verified in code and tests.
+- **Unfinished (non-blocking, should fix before promoting to the live engine):** W-2 Run now reports "queued" for
+  an inert workspace (not registered / schedules not opted in / disabled machine-wide) — expose an `inert_reason`;
+  W-3 (a) `_set_enabled` apply closure and (c) run-now request body still duplicated between `schedules/cli.py`
+  and `ui/service.py`; S-7 `restarted` does not distinguish applied vs queued; S-1..S-6 in `REVIEW.md`.
 
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
 - Supersedes the w24-07 "no review recorded" line below. `REVIEW.md` (unit w26-08) exists as an **uncommitted draft** with unfilled verdict/AC18-figure placeholders; its recorded outcome so far: no Critical; all 18 ACs Met; Warnings W-1 (enabling a `completed` schedule always 409s under a running daemon and the message says retry; same root cause as T-Un0Lm6 M1), W-2 (Run now says queued for a workspace whose schedules are inert), W-3 (CLI logic triplicated into `ui/service.py`).
@@ -71,5 +87,6 @@ the daemon validates and drains, so the daemon's governance gates still apply.
 - Two error idioms now coexist in `ui/app.py` (typed here, substring there) — deliberate, commented.
 
 ## Next actions
+0. (w26-08) Fix W-2 and W-3(a)(c) as a follow-up; record S-1..S-7 decisions. Items 1-2 below: review done (this task); T-Se4Bk5/T-Te3Qw8/T-Dc6Zr2 items stay with those tasks.
 1. Review (`T-Se4Bk5` for the mutation-route posture; `T-Te3Qw8` e2e tier; `T-Dc6Zr2` screenshots/docs).
 2. Human: promote via the Install / deploy path in `CLAUDE.md` after merge.
