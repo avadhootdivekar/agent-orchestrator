@@ -344,7 +344,7 @@ an older `ao` reading a newer file).
     events.jsonl   events.jsonl.1    # structured event log, single rollover
 ```
 
-`<workspace_slug>` uses `supervisor.py::_slug_for_root` (already exists: a readable basename
+`<workspace_slug>` uses `supervisor.py::slug_for_root` (already exists: a readable basename
 plus a hash suffix) so two workspaces with the same basename never collide.
 
 State lives in the **service** state dir, not the workspace, because the service owns fires and

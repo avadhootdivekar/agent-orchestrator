@@ -5,7 +5,7 @@ The only stand-in is the process supervisor: instead of spawning a child it runs
 ``cost_usd`` per task, the T-et7Edf AC15 seam). Everything else is real: ``ao schedule`` CLI,
 ``ScheduleEngine``, governance gate, fire/ledger stores, the real argv-forwarding check, the
 engine cost-cap breaker and its sticky ``cost_cap_usd``. Fixed injected clock
-(``schedules.cli._now``),
+(``schedules.cli.now_utc``),
 temp workspace + state dir (never a real ``$HOME``), no sleeps, no network.
 """
 
@@ -119,7 +119,7 @@ def capenv(env: Env, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
 
 
 def _tick(env: Env, monkeypatch: pytest.MonkeyPatch, at: datetime) -> int:
-    monkeypatch.setattr(sched_cli, "_now", lambda: at)
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: at)
     res = runner.invoke(app, ["schedule", "daemon", "--once", "--workspace", str(env.ws)])
     assert res.exit_code == 0, res.output
     return int(res.stdout.strip())

@@ -61,8 +61,8 @@ from .governance_gate import (
     GateResult,
     PromptSnapshot,
     UsageLedger,
-    _read_regular_file,
     check_and_reserve,
+    read_regular_file,
     skeleton,
 )
 from .schedule_engine import FireDecision
@@ -486,7 +486,7 @@ class ScheduledLauncher:
         path = self._guarded_path(store, prompt_file, "prompt_file")
         try:
             # S-2: same non-blocking, regular-file-only, size-capped open as the governed path.
-            data = _read_regular_file(Path(path), prompt_file)
+            data = read_regular_file(Path(path), prompt_file)
             if isinstance(data, GateResult):
                 detail = data.detail.get("detail", "not a regular file")
                 raise LaunchResolutionError(f"prompt_file unreadable: {prompt_file} ({detail})")

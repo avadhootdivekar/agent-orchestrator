@@ -2,7 +2,7 @@
 
 Each test drives the *real* engine + stores through the CLI boundary against a temp workspace and
 temp state dir (env-redirected: never a real ``$HOME``). Time enters only through
-``schedules.cli._now`` (fixed ``T0``), file mtimes are pinned with ``os.utime``, the webhook
+``schedules.cli.now_utc`` (fixed ``T0``), file mtimes are pinned with ``os.utime``, the webhook
 secret is an env var, and the process supervisor is the ``RunDirSupervisor`` stub (it creates the
 run directory; nothing is spawned). Not covered here: a real agent CLI, real uvicorn, systemd,
 the network (see the T-Te3Qw8 STATUS "not exercised" list).
@@ -28,7 +28,7 @@ from agent_orchestrator.service.fire_store import (
     ScheduleEventLog,
     ScheduleStateStore,
 )
-from agent_orchestrator.service.supervisor import _slug_for_root
+from agent_orchestrator.service.supervisor import slug_for_root
 from agent_orchestrator.service.webhook import (
     WebhookRequestQueue,
     WebhookTarget,
@@ -52,7 +52,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
     monkeypatch.setenv("AO_SERVICE_STATE_DIR", str(e.state))
     monkeypatch.setenv(SECRET_ENV, SECRET)
     monkeypatch.chdir(e.ws)
-    monkeypatch.setattr(sched_cli, "_now", lambda: T0)
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: T0)
     monkeypatch.setattr(sched_cli, "_SUPERVISOR_FACTORY", e.sup)
     pin_engine_monotonic(monkeypatch)
     return e
@@ -210,7 +210,7 @@ def test_file_watch_within_debounce_defers_then_fires(
     f.write_text("x")
     pin_mtime(f, T0 - timedelta(seconds=10))  # changed 10s ago, debounce 300s
     assert once(env)[0] == 0 and fires(env) == []
-    monkeypatch.setattr(sched_cli, "_now", lambda: T0 + timedelta(seconds=400))  # advance clock
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: T0 + timedelta(seconds=400))  # advance clock
     assert once(env)[0] == 1
     assert len(fires(env)) == 1
 
@@ -221,7 +221,7 @@ def test_file_watch_within_debounce_defers_then_fires(
 class _Hook:
     def __init__(self, env: Env, now: datetime) -> None:
         self.env, self.now = env, now
-        self.slug = _slug_for_root(str(env.ws))
+        self.slug = slug_for_root(str(env.ws))
         queue = WebhookRequestQueue(env.state)
         self.client = TestClient(
             build_webhook_app(
@@ -304,20 +304,20 @@ def test_until_max_runs_three_then_completed_then_enable_allows_more(
     env.add("loop", "--max-runs", "3")
     now = T0
     for i in range(3):
-        monkeypatch.setattr(sched_cli, "_now", lambda t=now: t)
+        monkeypatch.setattr(sched_cli, "now_utc", lambda t=now: t)
         if i == 0:
             due(env, "loop")
         assert once(env)[0] == 1, f"fire {i + 1}"
         now += timedelta(seconds=120)
     assert len(fires(env)) == 3 and len(run_dirs(env)) == 3
-    monkeypatch.setattr(sched_cli, "_now", lambda t=now: t)
+    monkeypatch.setattr(sched_cli, "now_utc", lambda t=now: t)
     n, _ = once(env)
     assert len(fires(env)) == 3  # the 4th tick launched nothing
     assert n == 0
     listed = json.loads(env.run("list", "--json").stdout)
     assert listed["schedules"][0]["status"] == "completed"
     env.run("enable", "loop")
-    monkeypatch.setattr(sched_cli, "_now", lambda t=now + timedelta(seconds=120): t)
+    monkeypatch.setattr(sched_cli, "now_utc", lambda t=now + timedelta(seconds=120): t)
     assert once(env)[0] == 1
     assert len(fires(env)) == 4
 

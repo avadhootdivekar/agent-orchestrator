@@ -33,7 +33,7 @@ from typing import Any, Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from .statefile import atomic_write_bytes, read_json_model, write_json_model_atomic
-from .supervisor import _slug_for_root
+from .supervisor import slug_for_root
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ class FireIntentStore:
 
     # -- paths --
     def _dir_for(self, workspace_root: str | Path) -> Path:
-        return self._root / _slug_for_root(_resolved_root(workspace_root))
+        return self._root / slug_for_root(_resolved_root(workspace_root))
 
     def _locate(self, key: str, workspace_root: str | Path | None = None) -> Path | None:
         if workspace_root is not None:
@@ -451,7 +451,7 @@ class _StateFile(BaseModel):
 
 
 def state_key(workspace_root: str | Path, schedule_id: str) -> str:
-    return f"{_slug_for_root(_resolved_root(workspace_root))}{STATE_KEY_SEP}{schedule_id}"
+    return f"{slug_for_root(_resolved_root(workspace_root))}{STATE_KEY_SEP}{schedule_id}"
 
 
 class ScheduleStateStore:

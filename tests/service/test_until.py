@@ -286,7 +286,7 @@ def cenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliEnv:
     monkeypatch.setenv("AO_SERVICE_CONFIG", str(tmp_path / "service.yaml"))
     monkeypatch.setenv("AO_SERVICE_STATE_DIR", str(e.state))
     monkeypatch.chdir(e.ws)
-    monkeypatch.setattr(sched_cli, "_now", lambda: E2E_T0)
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: E2E_T0)
     monkeypatch.setattr(sched_cli, "_SUPERVISOR_FACTORY", e.sup)
     return e
 
@@ -374,7 +374,7 @@ def test_lifecycle_satisfy_complete_enable_restart(
 
     # next tick fires again: the (fixed) clock moves on so a fresh instant is due
     later = E2E_T0 + timedelta(minutes=10)
-    monkeypatch.setattr(sched_cli, "_now", lambda: later)
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: later)
     assert _daemon_once(cenv) == "1"
     events = [e["event"] for e in json.loads(cenv.run("history", "loop", "--json").stdout)]
     assert "schedule.until_satisfied" in events

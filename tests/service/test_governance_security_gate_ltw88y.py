@@ -32,7 +32,7 @@ def test_g1_raw_prompt_open_refuses_a_symlink_final_component(tmp_path: Path) ->
     link.parent.mkdir()
     link.symlink_to(outside)
     with pytest.raises(OSError) as info:
-        gg._read_regular_file(link, "p.md")
+        gg.read_regular_file(link, "p.md")
     assert info.value.errno == errno.ELOOP
 
 
@@ -45,7 +45,7 @@ def test_g1_symlink_swapped_in_after_the_root_check_is_refused(
     prompt.write_text("benign")
     secret = tmp_path / "secret.md"
     secret.write_text("do not leak")
-    real_read = gg._read_regular_file
+    real_read = gg.read_regular_file
 
     def swap_then_read(path: Path, rel: str) -> bytes | gg.GateResult:
         # The race: after resolve()/is_relative_to() passed, the file becomes a symlink out.
@@ -53,7 +53,7 @@ def test_g1_symlink_swapped_in_after_the_root_check_is_refused(
         path.symlink_to(secret)
         return real_read(path, rel)
 
-    monkeypatch.setattr(gg, "_read_regular_file", swap_then_read)
+    monkeypatch.setattr(gg, "read_regular_file", swap_then_read)
     g = gg.read_prompt(binding("g", prompt_file="p.md"), str(ws))
     assert isinstance(g, gg.GateResult) and not g.admit
     assert g.reason == gg.REASON_PROMPT_MISSING

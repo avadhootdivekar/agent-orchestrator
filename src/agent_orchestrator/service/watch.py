@@ -47,7 +47,7 @@ from ..schedules.models import ResolvedBinding, WatchSpec
 from .fire_store import ScheduleState
 from .schedule_engine import Candidate
 from .statefile import read_json_model, write_json_model_atomic
-from .supervisor import _slug_for_root
+from .supervisor import slug_for_root
 
 logger = logging.getLogger(__name__)
 
@@ -393,7 +393,7 @@ class FileWatchSource:
         emit: EventSink | None = None,
     ) -> None:
         self._root = str(Path(workspace_root).resolve())
-        self._slug = _slug_for_root(self._root)
+        self._slug = slug_for_root(self._root)
         self._spec = spec
         self._store = store
         self._max_files = max_files if max_files is not None else spec.max_files

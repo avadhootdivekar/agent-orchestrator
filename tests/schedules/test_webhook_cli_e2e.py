@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 from agent_orchestrator.cli import app
 from agent_orchestrator.service.fire_store import FireIntentStore
 from agent_orchestrator.service.registry import default_registry_path
-from agent_orchestrator.service.supervisor import _slug_for_root
+from agent_orchestrator.service.supervisor import slug_for_root
 from agent_orchestrator.service.webhook import (
     WebhookRequestQueue,
     build_webhook_app,
@@ -104,7 +104,7 @@ def test_signed_delivery_is_fired_by_daemon_once_into_a_run_dir(
         "X-AO-Signature": compute_signature(SECRET.encode(), BODY, ts),
         "X-AO-Delivery": "e2e-1",
     }
-    slug = _slug_for_root(str(env.ws))
+    slug = slug_for_root(str(env.ws))
     assert client.post(f"/hooks/{slug}/on-push", content=BODY, headers=headers).status_code == 202
     (pending,) = list((env.state / "schedules" / "requests").glob("*.json"))
     assert json.loads(pending.read_text())["delivery_id"] == "e2e-1"
@@ -142,7 +142,7 @@ def test_wrong_signature_never_reaches_the_daemon(
         "X-AO-Timestamp": ts,
         "X-AO-Signature": compute_signature(b"wrong-secret-wrong-secret", BODY, ts),
     }
-    slug = _slug_for_root(str(env.ws))
+    slug = slug_for_root(str(env.ws))
     assert client.post(f"/hooks/{slug}/on-push", content=BODY, headers=bad).status_code == 401
     res = runner.invoke(app, ["schedule", "daemon", "--once", "--workspace", str(env.ws)])
     assert res.exit_code == 0 and res.stdout.strip() == "0"

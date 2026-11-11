@@ -1,8 +1,9 @@
 """T-88wSLC: governance (quota / prompt / skip-record / history) end to end via ``CliRunner``.
 
 Real ``ao`` root app, real ``ScheduleEngine`` + gate + ledger, fixed injected clock
-(``schedules.cli._now``), temp workspace/state (never a real ``$HOME``), stub supervisor (nothing is
-spawned). No sleeps. Scope here is quota / prompt / skip-record / history. ``ao schedule usage`` /
+(``schedules.cli.now_utc``), temp workspace/state
+(never a real ``$HOME``), stub supervisor (nothing is spawned). No sleeps. Scope here is quota /
+prompt / skip-record / history. ``ao schedule usage`` /
 ``resume`` / limit flags are covered at CLI tier in ``test_cli_governance_e2e.py`` and ``ao run`` /
 ``ao resume --cost-cap-usd`` in ``tests/test_e2e_cli_cost_cap.py``. A daemon-fired run that forwards
 ``--cost-cap-usd`` and then pauses is covered at service level only
@@ -31,7 +32,7 @@ PROMPT = "Summarise the nightly report.\nSecond line ✓\n"
 
 
 def _tick(env: Env, monkeypatch: pytest.MonkeyPatch, at: datetime) -> int:
-    monkeypatch.setattr(sched_cli, "_now", lambda: at)
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: at)
     res = runner.invoke(app, ["schedule", "daemon", "--once", "--workspace", str(env.ws)])
     assert res.exit_code == 0, res.output
     return int(res.stdout.strip())

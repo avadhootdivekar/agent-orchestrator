@@ -16,7 +16,7 @@ Design rules (see the ticket's Risks section):
   ``IntervalScheduler``; it never calls an event ``TriggerSource.commit``.
 * Every write to ``.ao/schedules.yaml`` goes through :meth:`ScheduleStore.mutate`.
 
-Time enters through :func:`_now` (tests monkeypatch it); the real registry file and state dir are
+Time enters through :func:`now_utc` (tests monkeypatch it); the real registry file and state dir are
 only touched through ``AO_SERVICE_CONFIG`` / ``AO_SERVICE_STATE_DIR`` / ``--state-dir`` so tests
 never reach a real ``$HOME``.
 """
@@ -130,7 +130,7 @@ JsonOpt = Annotated[bool, typer.Option("--json", help="Machine-readable output."
 _SUPERVISOR_FACTORY: Callable[[str], Any] | None = None
 
 
-def _now() -> datetime:
+def now_utc() -> datetime:
     return datetime.now(UTC)
 
 
@@ -293,7 +293,7 @@ def _build_engine(
             return self.target.launch_capped_resume(rec, new_cap_usd)
 
     def clock() -> datetime:
-        return _now()
+        return now_utc()
 
     kwargs: dict[str, Any] = {
         "eval_interval_seconds": interval if interval is not None else policy.eval_interval_seconds,
@@ -368,7 +368,7 @@ def list_cmd(
     payload: list[dict[str, Any]] = []
     warnings: list[str] = []
     any_schedule = False
-    now = _now()
+    now = now_utc()
     fires, ledger = _readonly_ledger(sdir)
     for root in _selected_roots(workspace, all_workspaces):
         bindings = _load_file(root).bindings
@@ -539,7 +539,7 @@ def next_cmd(
 ) -> None:
     """Upcoming fires, soonest first. Event kinds (file_watch/webhook) have no predicted time; one
     shows up only when its source already observes a pending event (marked ``pending event``)."""
-    now = _now()
+    now = now_utc()
     state = ScheduleStateStore(_state_dir(state_dir))
     scheds: dict[str, Scheduler] = {
         "cron": CronScheduler(lambda: now),
@@ -1389,12 +1389,12 @@ def _readonly_ledger(sdir: Path) -> tuple[Any, Any]:
     from ..service.usage_ledger import UsageLedger
 
     fires = readonly_fire_store(sdir)
-    return fires, UsageLedger(fires, clock=_now)
+    return fires, UsageLedger(fires, clock=now_utc)
 
 
 def _parse_at(raw: str | None) -> datetime:
     if raw is None:
-        return _now()
+        return now_utc()
     try:
         at = datetime.fromisoformat(raw)
     except ValueError:
@@ -1424,11 +1424,11 @@ def usage_cmd(
     doc = build_usage_doc(
         workspace=str(root),
         at=instant,
-        generated_at=_now(),
+        generated_at=now_utc(),
         bindings=bindings,
         ledger=ledger,
         fires=fires,
-        events=ScheduleEventLog(sdir, clock=_now),
+        events=ScheduleEventLog(sdir, clock=now_utc),
     )
     if as_json:
         _emit_json(doc)
@@ -1471,7 +1471,7 @@ def resume_cmd(
     root, sdir = _workspace_root(workspace), _state_dir(state_dir)
     binding = next((b for b in _load_file(root).bindings if b.id == schedule_id), None)
     fires = FireIntentStore(sdir)
-    ledger = UsageLedger(fires, clock=_now)
+    ledger = UsageLedger(fires, clock=now_utc)
 
     def request(drain: Callable[[datetime], list[Any]] | None) -> Any:
         return request_capped_resume(
@@ -1484,7 +1484,7 @@ def resume_cmd(
             binding=binding,
             fires=fires,
             ledger=ledger,
-            clock=_now,
+            clock=now_utc,
             drain=drain,
         )
 
@@ -1587,7 +1587,7 @@ def enable_cmd(
                 current.runs_count = 0
             fresh.set_status(root, schedule_id, STATUS_ACTIVE)
     _set_enabled(root, schedule_id, True)
-    ScheduleEventLog(sdir, clock=_now).emit(
+    ScheduleEventLog(sdir, clock=now_utc).emit(
         EVENT_ENABLED,
         workspace=str(root),
         schedule_id=schedule_id,
@@ -1609,7 +1609,7 @@ def disable_cmd(
     root, sdir = _workspace_root(workspace), _state_dir(state_dir)
     _require_binding(root, schedule_id)
     _set_enabled(root, schedule_id, False)
-    ScheduleEventLog(sdir, clock=_now).emit(
+    ScheduleEventLog(sdir, clock=now_utc).emit(
         EVENT_DISABLED,
         workspace=str(root),
         schedule_id=schedule_id,
@@ -1631,7 +1631,7 @@ def _queue_request(
         "kind": REQUEST_KIND_RUN_NOW,
         "workspace_root": str(root),
         "schedule_id": schedule_id,
-        "requested_at": _now().isoformat(),
+        "requested_at": now_utc().isoformat(),
         "force": force,
         "requested_by": requested_by,
     }
@@ -1651,7 +1651,7 @@ def _run_local(
         request = RunNowRequest(
             workspace_root=str(root),
             schedule_id=binding.id,
-            requested_at=_now(),
+            requested_at=now_utc(),
             force=force,
             requested_by=requested_by,
         )
@@ -1749,7 +1749,7 @@ def daemon_cmd(
     previous: dict[int, Any] = {}
     try:
         if once:
-            decisions = engine.tick(_now())
+            decisions = engine.tick(now_utc())
             for d in decisions:
                 typer.echo(_decision_line(d), err=True)
             typer.echo(str(len(decisions)))

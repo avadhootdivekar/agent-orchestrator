@@ -1,6 +1,6 @@
 """T-Cl6Jn9: ``ao schedule`` end to end via ``CliRunner`` against the ROOT app (real registration).
 
-Fixed clock (``schedules.cli._now``), temp workspace/state/registry (env-redirected, never a real
+Fixed clock (``schedules.cli.now_utc``), temp workspace/state/registry (env-redirected, never a real
 ``$HOME``), a fake process supervisor (nothing is spawned).
 """
 
@@ -87,7 +87,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
     monkeypatch.setenv("AO_SERVICE_CONFIG", str(tmp_path / "service.yaml"))
     monkeypatch.setenv("AO_SERVICE_STATE_DIR", str(e.state))
     monkeypatch.chdir(e.ws)
-    monkeypatch.setattr(sched_cli, "_now", lambda: T0)
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: T0)
     monkeypatch.setattr(sched_cli, "_SUPERVISOR_FACTORY", e.sup)
     pin_engine_monotonic(monkeypatch)
     return e
@@ -597,9 +597,9 @@ def test_run_now_local_force_bypasses_overlap_only(
         sched_cli, "_SUPERVISOR_FACTORY", lambda root: live.setdefault(root, Live(Path(root)))
     )
     env.run("run-now", "nightly", "--local")
-    monkeypatch.setattr(sched_cli, "_now", lambda: T0 + timedelta(seconds=5))
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: T0 + timedelta(seconds=5))
     assert "not fired" in env.run("run-now", "nightly", "--local").output  # overlap skip
-    monkeypatch.setattr(sched_cli, "_now", lambda: T0 + timedelta(seconds=10))  # new fire key
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: T0 + timedelta(seconds=10))  # new fire key
     assert "fired: run_id=" in env.run("run-now", "nightly", "--local", "--force").output
 
 

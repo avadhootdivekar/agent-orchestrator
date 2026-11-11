@@ -170,7 +170,7 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _slug_for_root(root: str) -> str:
+def slug_for_root(root: str) -> str:
     """Filesystem-safe, collision-resistant slug for a workspace root's log filename
     (AC20)."""
     sanitized = re.sub(r"[^A-Za-z0-9]+", "_", root).strip("_") or "root"
@@ -660,7 +660,7 @@ class Supervisor:
         self._write_supervisor_snapshot()
 
     def _log_path_for(self, root: str) -> Path:
-        return self._state_dir / LOGS_SUBDIR / f"{_slug_for_root(root)}.log"
+        return self._state_dir / LOGS_SUBDIR / f"{slug_for_root(root)}.log"
 
     # -- shutdown (AC9) -----------------------------------------------------------------------
 

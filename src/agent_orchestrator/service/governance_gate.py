@@ -212,7 +212,7 @@ def gate(
 # -- fixed prompt (HLD §11) --------------------------------------------------------------------
 
 
-def _read_regular_file(path: Path, rel: str) -> bytes | GateResult:
+def read_regular_file(path: Path, rel: str) -> bytes | GateResult:
     """Open ONCE (``O_NONBLOCK`` so a FIFO swapped in cannot block while the usage flock is held
     -- L6), ``fstat`` the descriptor, then read at most ``MAX_PROMPT_BYTES + 1`` bytes.
 
@@ -253,7 +253,7 @@ def read_prompt(binding: ResolvedBinding, workspace_root: str) -> PromptSnapshot
             False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": "escapes_root"}
         )
     try:
-        data = _read_regular_file(path, rel)
+        data = read_regular_file(path, rel)
     except (FileNotFoundError, NotADirectoryError):
         return GateResult(False, REASON_PROMPT_MISSING, None, {"path": rel})
     except OSError as exc:

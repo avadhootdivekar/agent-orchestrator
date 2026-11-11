@@ -148,7 +148,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
     monkeypatch.setenv("AO_SERVICE_CONFIG", str(tmp_path / "service.yaml"))
     monkeypatch.setenv("AO_SERVICE_STATE_DIR", str(e.state))
     monkeypatch.chdir(e.ws)
-    monkeypatch.setattr(sched_cli, "_now", lambda: NOW)
+    monkeypatch.setattr(sched_cli, "now_utc", lambda: NOW)
     return e
 
 

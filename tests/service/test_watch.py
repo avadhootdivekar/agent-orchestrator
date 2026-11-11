@@ -311,9 +311,9 @@ def test_crash_between_fire_and_digest_save_does_not_double_fire(tmp_path: Path)
     touch(Path(env.root) / "w/a.md", EPOCH)
     assert len(env.tick(T0 + timedelta(minutes=5))) == 1
     # simulate the crash: the fire key is burned but the digest save was lost
-    from agent_orchestrator.service.supervisor import _slug_for_root
+    from agent_orchestrator.service.supervisor import slug_for_root
 
-    store.path_for(_slug_for_root(env.root), "s").unlink()
+    store.path_for(slug_for_root(env.root), "s").unlink()
     d = env.evaluate(now=T0 + timedelta(minutes=6))
     assert not d.fire and d.reason == "already_fired"  # same mtime -> same fire_key, burned
     # L-f: the reported decision key carries the discriminator too (pins _already_fired)

@@ -87,7 +87,7 @@ from .schedule_engine import (
     ResolvedBinding,
 )
 from .statefile import atomic_write_bytes
-from .supervisor import _slug_for_root
+from .supervisor import slug_for_root
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -573,7 +573,7 @@ class WebhookSource:
 
     def __init__(self, state_dir: Path, workspace_root: str, binding: ResolvedBinding) -> None:
         self._queue = WebhookRequestQueue(state_dir)
-        self._slug = _slug_for_root(str(Path(workspace_root).resolve()))
+        self._slug = slug_for_root(str(Path(workspace_root).resolve()))
         self._schedule_id = binding.id
 
     def observe(
@@ -621,7 +621,7 @@ def make_binding_lookup(
         for entry in entries:
             if not getattr(entry, "schedules", False):
                 continue
-            if _slug_for_root(str(Path(entry.root).resolve())) != slug:
+            if slug_for_root(str(Path(entry.root).resolve())) != slug:
                 continue
             try:
                 bindings = store_factory(entry.root).load().bindings

@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from agent_orchestrator.schedules.models import ScheduleBinding, WebhookSpec
 from agent_orchestrator.service import webhook as wh
 from agent_orchestrator.service.schedule_engine import Candidate
-from agent_orchestrator.service.supervisor import _slug_for_root
+from agent_orchestrator.service.supervisor import slug_for_root
 from agent_orchestrator.service.webhook import (
     MAX_WEBHOOK_BODY_BYTES,
     NonceCache,
@@ -72,7 +72,7 @@ class Harness:
     def __init__(self, tmp: Path, b: ScheduleBinding | None = None, **kw: Any) -> None:
         self.root = str((tmp / "ws").resolve())
         Path(self.root).mkdir(exist_ok=True)
-        self.slug = _slug_for_root(self.root)
+        self.slug = slug_for_root(self.root)
         self.binding = b or wh_binding()
         self.state = tmp / "state"
         self.clock = Clock()
@@ -538,7 +538,7 @@ def _engine_env(tmp_path: Path) -> tuple[Any, Harness]:
         "webhook", lambda root, b: WebhookSource(env.tmp / "state", root, b)
     )
     h = Harness(tmp_path)
-    h.root, h.slug, h.binding = env.root, _slug_for_root(env.root), env.binding("hook")
+    h.root, h.slug, h.binding = env.root, slug_for_root(env.root), env.binding("hook")
     h.clock.now = T0
     return env, h
 
@@ -593,7 +593,7 @@ def test_binding_lookup_filters(tmp_path: Path) -> None:
             return SimpleNamespace(workspaces=[SimpleNamespace(root=env.root, schedules=True)])
 
     look = make_binding_lookup(tmp_path / "r.yaml", registry_factory=Reg)
-    slug = _slug_for_root(env.root)
+    slug = slug_for_root(env.root)
     got = look(slug, "on")
     assert got is not None and got.binding.id == "on" and got.workspace_root == env.root
     assert look(slug, "off") is None and look(slug, "cron") is None
@@ -710,7 +710,7 @@ def test_m1_two_deliveries_in_the_same_second_both_fire(tmp_path: Path) -> None:
         "webhook", lambda root, b: WebhookSource(env.tmp / "state", root, b)
     )
     h = Harness(tmp_path)
-    h.root, h.slug, h.binding = env.root, _slug_for_root(env.root), env.binding("hook")
+    h.root, h.slug, h.binding = env.root, slug_for_root(env.root), env.binding("hook")
     for tag in ("x", "y"):  # same wall-clock second, distinct deliveries
         assert h.post(body_for(tag), headers={"X-AO-Delivery": tag}).status_code == 202
     env.tick(T0 + timedelta(seconds=1))
@@ -729,7 +729,7 @@ def test_m1_late_drain_still_fires_with_catch_up_skip(tmp_path: Path, late: time
         "webhook", lambda root, b: WebhookSource(env.tmp / "state", root, b)
     )
     h = Harness(tmp_path)
-    h.root, h.slug, h.binding = env.root, _slug_for_root(env.root), env.binding("hook")
+    h.root, h.slug, h.binding = env.root, slug_for_root(env.root), env.binding("hook")
     assert h.post().status_code == 202
     env.tick(T0 + late)  # daemon was down: drained long after receipt
     assert len(env.launcher.decisions) == 1
@@ -880,7 +880,7 @@ def test_l1_unexpected_store_error_fails_closed(tmp_path: Path) -> None:
             raise PermissionError("schedules.yaml")
 
     look = make_binding_lookup(tmp_path / "r.yaml", registry_factory=Reg, store_factory=Boom)  # type: ignore[arg-type]
-    assert look(_slug_for_root(str(tmp_path.resolve())), "x") is None
+    assert look(slug_for_root(str(tmp_path.resolve())), "x") is None
 
 
 # -- re-review fixes (w18-02: N1-N6) -------------------------------------------------------------
@@ -987,7 +987,7 @@ def test_n3_other_schedule_traffic_cannot_evict_a_replayable_entry(tmp_path: Pat
     env = env_for(tmp_path, [wh_binding("a"), wh_binding("b", rate_per_minute=100000)])
     h = Harness(tmp_path)
     by_id = {b.id: b for b in (env.binding("a"), env.binding("b"))}
-    h.root, h.slug = env.root, _slug_for_root(env.root)
+    h.root, h.slug = env.root, slug_for_root(env.root)
     h._lookup = lambda slug, sid: (  # type: ignore[method-assign]
         WebhookTarget(env.root, by_id[sid]) if slug == h.slug and sid in by_id else None
     )
@@ -1047,7 +1047,7 @@ def test_n4_same_body_two_timestamps_same_second_both_launch(tmp_path: Path) -> 
         "webhook", lambda root, b: WebhookSource(env.tmp / "state", root, b)
     )
     h = Harness(tmp_path)
-    h.root, h.slug, h.binding = env.root, _slug_for_root(env.root), env.binding("hook")
+    h.root, h.slug, h.binding = env.root, slug_for_root(env.root), env.binding("hook")
     now_ts = int(h.clock.now.timestamp())
     for ts in (now_ts - 1, now_ts):  # same body, same server second, different signed timestamps
         assert h.post(headers={"X-AO-Timestamp": str(ts)}).status_code == 202
@@ -1108,7 +1108,7 @@ def test_n6_lookup_failure_is_logged_once_without_content_and_fails_closed(tmp_p
     def emit(e: str, **f: Any) -> None:
         events.append((e, f))
 
-    slug = _slug_for_root(str(tmp_path.resolve()))
+    slug = slug_for_root(str(tmp_path.resolve()))
     for reg, store, source, err in (
         (Reg, Boom, "schedules", "PermissionError"),
         (BadReg, Boom, "registry", "ValueError"),

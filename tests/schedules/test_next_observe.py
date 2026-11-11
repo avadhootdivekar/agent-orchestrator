@@ -11,7 +11,7 @@ from typing import Any
 
 from typer.testing import CliRunner
 
-from agent_orchestrator.service.supervisor import _slug_for_root
+from agent_orchestrator.service.supervisor import slug_for_root
 from agent_orchestrator.service.webhook import WebhookDelivery, WebhookRequestQueue
 
 from .test_cli_e2e import QUOTA, T0, Env
@@ -57,7 +57,7 @@ def test_next_shows_pending_webhook_without_consuming(env: Env) -> None:
     queue = WebhookRequestQueue(env.state)
     path = queue.enqueue(
         WebhookDelivery(
-            workspace_slug=_slug_for_root(str(env.ws)),
+            workspace_slug=slug_for_root(str(env.ws)),
             schedule_id="hook",
             received_at=T0 - timedelta(seconds=5),
             delivery_id="d-1",

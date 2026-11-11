@@ -94,11 +94,11 @@ def test_fire_key_varies_with_inputs() -> None:
 
 
 def test_record_path_uses_supervisor_slug(store: FireIntentStore, tmp_path: Path) -> None:
-    from agent_orchestrator.service.supervisor import _slug_for_root
+    from agent_orchestrator.service.supervisor import slug_for_root
 
     store.write(_rec())
     resolved = str(Path(ROOT).resolve())
-    assert (tmp_path / "schedules/fires" / _slug_for_root(resolved) / "k1.json").is_file()
+    assert (tmp_path / "schedules/fires" / slug_for_root(resolved) / "k1.json").is_file()
 
 
 def test_write_get_update_roundtrip(store: FireIntentStore) -> None:
