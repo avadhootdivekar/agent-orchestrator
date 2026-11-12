@@ -234,6 +234,8 @@ def test_restart_defers_in_flight_and_counts_late_results(tmp_path: Path) -> Non
         flag.unlink()
         time.sleep(1.0)
         assert proc.poll() is None, "must still wait for the running orphan"
+        # The orphan holds the only lane (--lanes 1): nothing new may start beside it.
+        assert not (root / "argv.log").exists()
         # The orphan "running" finishes: result written, login file removed by its run.sh.
         late = root / "jobs" / "p-running" / "t1"
         _finished_trial(late, cost=1.5, reward=1)
@@ -245,5 +247,5 @@ def test_restart_defers_in_flight_and_counts_late_results(tmp_path: Path) -> Non
     assert "--include killed" in launched  # killed run (no result, no run.sh): archived, rerun
     assert "--include running" not in launched and "--include finished" not in launched
     assert (root / "jobs" / "p-killed.infra-1").is_dir()
-    assert "[wait-inflight] running" in stdout
+    assert "[skip-done] running" in stdout and "(finished after start)" in stdout
     assert "[end] total $4.00" in stdout  # 2.0 + 1.5 counted late + 0.5 for the rerun

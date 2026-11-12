@@ -3,7 +3,7 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-12 15:23 UTC (Claude, manager)
+- Last updated: 2026-11-12 15:40 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
 ## Owner rules in force
@@ -78,6 +78,13 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 15:35 UTC: plain hit `[wait-login]` (token 1.75 h left). The token refreshes only near expiry, so plain would
+  have idled for about 1.7 h.
+  - Restarted plain with `--min-token-hours 1.0` (plain tasks have taken 13 min at most). ao stays at 1.5.
+  - The restart launched 2 new tasks beside the 2 left in flight: 4 plain containers for about 15 min. Memory was
+    fine (43 GB available).
+  - Fixed: trials left in flight now hold a lane and a cap in `budgeted.py`. Takes effect on the next driver
+    start; 27 tests pass.
 - 15:23 UTC: running.
   - ao pebble at about 78 min. It passed ck-01 (continue); one 23-min unit changed nothing, so the time rule may
     fail it.

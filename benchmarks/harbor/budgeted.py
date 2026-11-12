@@ -272,8 +272,14 @@ def main() -> int:
             print(f"[wait-hold] {args.hold_while!r} still true", flush=True)
         hold_logged = held
         now = time.time()
-        while pending and len(running) < args.lanes and not (token_short or load_high or held):
-            if spent + (len(running) + 1) * args.cap_usd > args.total_usd:
+        # Trials left running by a stopped driver occupy a lane and a cap like our own.
+        orphans = sum(job_in_flight(f"{args.prefix}-{t}") for t in pending)
+        while (
+            pending
+            and len(running) + orphans < args.lanes
+            and not (token_short or load_high or held)
+        ):
+            if spent + (len(running) + orphans + 1) * args.cap_usd > args.total_usd:
                 break
             ready = [t for t in pending if not_before.get(t, 0) <= now]
             if not ready:
