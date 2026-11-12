@@ -15,6 +15,9 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   Check status every 30 min. `finplan-dev1` must never go down.
 - Host token only, passed in a per-job 0600 file that is deleted afterwards. Never copy the refresh token. After
   each batch, grep the job dirs for `sk-ant-oat`.
+- Login thresholds: plain `--min-token-hours 0.5` (tasks take 13 min at most), ao 1.5 (runs take up to 95 min).
+  - The token lives about 8 h and refreshes only near expiry.
+  - `--refresh-host-login` triggers the refresh once the token has expired and the pool is idle.
 
 ## State now
 - Spend so far: about **$132.57 of $500**, about $367 left.
@@ -86,9 +89,13 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 15:58 UTC: ao reached its 1.5 h login threshold after launching `fastapi`. The next ao task waits for the
+  token to refresh at expiry, in about 1.5 h.
+  - Plain restarted with threshold 0.5 h on the fixed code: 2 trials still in flight were counted, and nothing
+    extra was launched.
 - 15:35 UTC: plain hit `[wait-login]` (token 1.75 h left). The token refreshes only near expiry, so plain would
   have idled for about 1.7 h.
-  - Restarted plain with `--min-token-hours 1.0` (plain tasks have taken 13 min at most). ao stays at 1.5.
+  - Restarted plain with `--min-token-hours 1.0`; lowered to 0.5 at 15:58. ao stays at 1.5.
   - The restart launched 2 new tasks beside the 2 left in flight: 4 plain containers for about 15 min. Memory was
     fine (43 GB available).
   - Fixed: trials left in flight now hold a lane and a cap in `budgeted.py`. Takes effect on the next driver
