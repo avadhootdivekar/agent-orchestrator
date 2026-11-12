@@ -3,7 +3,7 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-12 15:40 UTC (Claude, manager)
+- Last updated: 2026-11-12 16:23 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
 ## Owner rules in force
@@ -20,14 +20,14 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - `--refresh-host-login` triggers the refresh once the token has expired and the pool is idle.
 
 ## State now
-- Spend so far: about **$132.57 of $500**, about $367 left.
+- Spend so far: about **$142.97 of $500**, about $357 left.
 
   | Item | Amount |
   |---|---|
   | Phase 0/1 | $33.06 |
   | Round 1, plain | $11.15 |
-  | Round 1, ao (9 of 13 tasks) | $48.41 |
-  | Calibration 1e (46 of 91 tasks) | $39.94 |
+  | Round 1, ao (10 of 13 tasks) | $51.80 |
+  | Calibration 1e (58 of 91 tasks) | $46.96 |
   
 - Finplan run `o-1eyd60-ux-focused-parallel` **finished** at about 13:17 UTC: 30 waves, then closeout. Its
   `final/` has closeout, verify and push reports.
@@ -42,7 +42,7 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - plain `prometheus-typed-label-sorting`: solved 17/17, $0.40.
   - plain `psd-tools-blend-range-api`: solved 45/45, $0.45.
   - No token in the job dirs; the secrets dir is empty.
-- Calibration 1e: 45 tasks left (2 in flight).
+- Calibration 1e: 33 tasks left (2 in flight). So far 40 solved and 18 failed.
   - The `optique-conditional-option-dependencies` retry ran and failed 35/36. Its first attempt had hit the ECR
     rate limit ($0) and is archived as `.infra-1`.
 - ao round 1: grading 7 done, **ao 1/7 vs fresh plain 2/7**. ao failed obsidian with the same 2 hidden tests as plain (58/60, $3.76). Regression tasks so far:
@@ -53,7 +53,8 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
     - The hidden `test.patch` replaces that file, so the package no longer builds and every test fails.
     - This is a genuine model failure, not a harness bug. It is also a structural risk for ao: its dedicated
       test-writing units create test files that can collide with hidden test files.
-  - 4 left.
+  - fastapi solved ($3.38).
+  - 3 left: kombu, eicrud, happy-dom.
 
 ## How to check and resume
 ```bash
@@ -76,8 +77,8 @@ ps -eo pid,args | grep -E '[b]udgeted.py'  # both drivers alive?
 | # | Step | Status | Budget |
 |---|---|---|---|
 | 1 | Round 1, plain fresh, 13 tasks | **done**: 7/13 solved; 3 verdicts flipped vs Phase 1 | $11.15 of $30 |
-| 2 | Round 1, ao, 13 tasks | 9/13 done: grading 1/7 (yjs solved); regression 1/2 so far (pebble: build break) | $48.41 of $104 |
-| 3 | Calibration 1e, plain, 91 tasks | 46/91 done; running | $39.94 of $90 |
+| 2 | Round 1, ao, 13 tasks | 10/13 done: grading 1/7 (yjs solved); regression 2/3 so far (pebble: build break) | $51.80 of $104 |
+| 3 | Calibration 1e, plain, 91 tasks | 58/91 done (40 solved); running | $46.96 of $90 |
 | 4 | Rebuild sets over all 113 tasks (`sets/build_sets.py` on p1a, p1c-\*, p1e-\*) | after step 3 | $0 |
 | 5 | Round 2: new grading tasks, both arms, 1 attempt each | after step 4 | reserve |
 | 6 | Round 3: more attempts on grading tasks, in seeded order, until $500 | after step 5 | rest |
@@ -89,13 +90,19 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
-- 15:58 UTC: ao reached its 1.5 h login threshold after launching `fastapi`. The next ao task waits for the
+- 16:23 UTC: ao fastapi 1 (137/137, $3.38); ao waits for the login (token 0.89 h, refresh at expiry).
+  - Plain: task-graph 1, superjson 1, fd 1, dynamodb-cond 1; calibration 58/91.
+  - Spend $142.97. Load 1.1.
+- 15:53 UTC: ao `fastapi` in flight; the next ao task waits for the login (1.39 h left).
+  - Plain: `mnamer` (left in flight) finished, `oxvg` (left in flight) is running, and a new plain launch is due.
+  - Load 3.0; `finplan-dev1` up.
+- 15:45 UTC: ao reached its 1.5 h login threshold after launching `fastapi`. The next ao task waits for the
   token to refresh at expiry, in about 1.5 h.
   - Plain restarted with threshold 0.5 h on the fixed code: 2 trials still in flight were counted, and nothing
     extra was launched.
 - 15:35 UTC: plain hit `[wait-login]` (token 1.75 h left). The token refreshes only near expiry, so plain would
   have idled for about 1.7 h.
-  - Restarted plain with `--min-token-hours 1.0`; lowered to 0.5 at 15:58. ao stays at 1.5.
+  - Restarted plain with `--min-token-hours 1.0`; lowered to 0.5 at 15:45. ao stays at 1.5.
   - The restart launched 2 new tasks beside the 2 left in flight: 4 plain containers for about 15 min. Memory was
     fine (43 GB available).
   - Fixed: trials left in flight now hold a lane and a cap in `budgeted.py`. Takes effect on the next driver
