@@ -6,7 +6,10 @@
 - Type: ENHANCEMENT (engine; spec-level, workflow-agnostic)
 - Owner: `TODO`
 - Created: `2026-11-12`
-- Status: `Draft` (design only; not checked against current clone HEAD; live engine is the uv-tool snapshot)
+- Status: `Draft` (design only). Checked 2026-11-12 against clone HEAD: one pool (`ceiling`) + one soft limit
+  (`live_limit`/`max_parallel`, `engine.py`, `control.py`); no per-group limit exists today.
+- Priority: normal, not blocking. FinPlan is unblocked without it (fin_plan `30b3fa85`: `scripts/res-slot.sh`,
+  `scripts/cargo-slot.sh`); the value of this ticket is engine visibility (Sentinel/UI) and reuse by other workflows.
 - Origin: `T-Fp9Hng` E5/E6; measured in run `o-k6shov-ux-complete-500`
 
 ## Problem (generic form)
@@ -43,6 +46,21 @@ avg concurrency 2.97 on a 32-core host (see T-Fp9Hng E6).
 5. Fairness: FIFO per resource, optional priority; no starvation of a large `units` request.
 6. Optional: a built-in `disk` resource-style guard is T-Fp9Hng E5 item 1 (separate, simpler floor check).
 
+## Review corrections (2026-11-12)
+1. **Granularity: command-scoped leases are required, not only task-level `requires`.** A task-level lease holds the
+   resource for the whole task, but a build unit spends most of its time editing and thinking (FinPlan median task
+   22 min; a warm targeted build 1-120 s). Task-level acquisition alone would serialise more than the agent-held lock it
+   replaces. Add `ao resource run <name> [--units N] -- <cmd>`: a CLI the agent wraps around ONE command; the lease is
+   registered with the engine under the task id, wait time is accounted, and the Sentinel shows "waiting on <name>"
+   instead of idle. Task-level `requires` stays for resources a whole task occupies (a device, a deploy target, a seat).
+2. **Export the slot index** (`AO_RESOURCE_SLOT`, `AO_RESOURCE_SLOTS`) to the command/task. This is what lets a workflow
+   keep a warm per-slot cache or port range (FinPlan: slot k builds in target dir k: 108 s cold vs 1 s warm).
+3. **Scope `host`, and interop with non-AO processes.** Runs from different workspaces and interactive sessions share
+   one host. Add `scope: host` (lease store at a configured host path), and implement leases as flock slot files at that
+   path so a non-AO process using the same files (FinPlan `scripts/res-slot.sh`, same layout `<dir>/<name>.<k>.lock`)
+   shares the same capacity. Locks must not be inherited by daemons the command starts.
+4. Reference behaviour to copy (tested, 46 checks / 13 mutants): fin_plan `scripts/res-slot.sh` + `scripts/tests/test_res_slot.sh`.
+
 ## Acceptance Criteria
 - [ ] AC1: temp-workspace run with resource `heavy` capacity 2 and 6 independent tasks each `requires: [heavy]`: never
   more than 2 run concurrently; the rest show `queued_for_resource`; total runtime ~ 3 task-lengths (test, not mock clock only).
@@ -55,13 +73,19 @@ avg concurrency 2.97 on a 32-core host (see T-Fp9Hng E6).
 - [ ] AC6: status/`ao ctl show`/UI list holders, queue and wait; digest exposes per-resource queue length.
 - [ ] AC7: runs that declare nothing behave exactly as today (regression test on an existing workflow).
 - [ ] AC8: docs: ADR (generic semantics, why no lane type) + README section; no codebase-specific text in built-in templates.
+- [ ] AC9: command-scoped lease: 4 agents run `ao resource run heavy -- sleep 5` with capacity 2 -> never more than 2 at
+  once; a waiting task is not idle-killed; killing the agent releases its lease; a daemon started by the command does
+  not keep the lease.
+- [ ] AC10: the slot index is exported; with `scope: host`, an AO lease and a plain flock holder on the same slot file
+  exclude each other.
 
 ## Risks / Dependencies
 - Interacts with soft barriers (T-Sn6Brr) and wave planning: a manifest with many tasks requiring one resource must not
   be treated as stuck. Needs the E3 cycle/self-dependency fix first so resource edges cannot add false cycles.
 - Deadlock: tasks needing multiple resources -> acquire all-or-nothing in a fixed order.
 - Multi-run host sharing (scope: workspace) needs a durable lease store; keep it under the workspace `.orchestrator/`.
-- Companion (not AO): fin_plan `T-t8Ls3q-run-throughput-test-scope-lanes-per-lane-build-dirs` declares `heavy-build`,
-  `mongo-test`, ports and lanes as resources once this exists; until then the flock convention stays.
+- Companion (not AO): fin_plan `T-t8Ls3q-run-throughput-test-scope-lanes-per-lane-build-dirs`, landed in fin_plan `30b3fa85`
+  with its own counting slots (`cargo`=3, `live`=2). Once this exists FinPlan maps those names to engine resources.
+  Test Mongo and ports turned out not to need a resource: each unit gets a private Mongo port and a per-slot port base.
 - Also from the same analysis, separate in `T-Fp9Hng`: "no agent polling" (turn-ended + background command, engine
   resumes the agent) - related but a different mechanism (agent lifecycle, not scheduling).

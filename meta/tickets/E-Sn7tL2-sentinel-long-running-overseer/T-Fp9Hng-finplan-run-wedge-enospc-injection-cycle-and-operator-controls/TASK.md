@@ -53,7 +53,8 @@ Asks:
    `result` + live descendants) distinctly from "working" and from "stuck"; warn instead of kill, or kill only
    after a longer, separate bound.
 3. Document/guard the agent-side cause: in `claude -p` there is no re-invocation on background-task completion;
-   instructions should require foreground commands with a timeout (see finplan memory `ao-full-tester-schedulewakeup-gotcha`).
+   the run prompt / workspace agent specs (NOT the built-in templates, owner decision 2026-11-12) require bounded
+   blocking waits (see finplan memory `ao-full-tester-schedulewakeup-gotcha`); done for FinPlan in `CLAUDE.md` (`30b3fa85`).
 4. `last_activity_at` semantics: currently set at some ticks, in one case equal to the engine tick not the task's own
    last output; verify what it measures (see E1: all running tasks shared the identical value 11:58:23/38).
 
@@ -91,11 +92,15 @@ at the next checkpoint barrier; (c) document the supported levers in `overseer-c
 
 ### E5 - Heavy-resource policy lives only in LLM prose; no engine/template support (lock, test scope, scratch cleanup)
 - `flock /tmp/finplan-heavy.lock` is an instruction sentence the Overseer copies into every unit brief; each agent
-  calls `flock cargo ...` itself. Nothing measures lock wait, enforces release, or shows "waiting on lock" in status.
+  calls `flock cargo ...` itself. (Origin, verified 2026-11-12: no tracked file defines the lock; the Overseer
+  introduced it at ck-02 from the FinPlan run prompt's "serialize heavy builds" rule. Replaced FinPlan-side by counting
+  slots in fin_plan `30b3fa85`.) Nothing measures lock wait, enforces release, or shows "waiting on lock" in status.
   A task waiting on the lock is indistinguishable from a hung one (see E1/E2). Host: 32 cores, 62 GB RAM, load 3-5, i.e.
   one global lock leaves the machine mostly idle.
 - Unit scope: a build unit (`w14-04`) ran `cargo test --workspace` (336 test binaries, 30+ min) itself; sweeps are
-  repeated per unit and again per wave. Cost: wall-clock and disk (98 GB private target dir for one task).
+  repeated per unit and again per wave. Cost: wall-clock and disk (98 GB private target dir for one task). Driver:
+  fin_plan `done-check` rule 7 requires a workspace sweep per Rust ticket; FinPlan now runs it once per wave in a sweep
+  unit (fin_plan `30b3fa85`).
 - Per-task private `CARGO_TARGET_DIR`/scratch dirs are an instruction ("delete after"); a task that finished or was
   killed leaked 98 GB and filled the disk (root cause of E1).
 Asks (engine hooks only; the template is not changed):
@@ -124,13 +129,18 @@ Conclusion (2026-11-12, owner discussion): most throughput fixes are NOT AO chan
 if it is meaningful for ANY workflow (software or not); how to chunk, scope tests or name lanes is policy of the target
 repo/run.
 - Stays in AO (generic): (a) named resources with capacity + engine-side acquisition, with concurrency groups as the same
-  mechanism -> new ticket `T-Rs4Qv8-named-resources-and-concurrency-groups`; (b) "turn ended, background command running,
-  engine resumes the agent on completion" (the E2 fix, extended; no agent polling); (c) soft barrier as a stable default
+  mechanism -> new ticket `T-Rs4Qv8-named-resources-and-concurrency-groups`; (b) liveness of a turn-ended agent with live
+  descendants (E2 asks 1-2) is required; "engine resumes the agent on completion" is OPTIONAL (corrected 2026-11-12):
+  bounded blocking waits work in `claude -p` and polling is cheap; the measured waiting was the global lock plus per-unit
+  sweeps, both FinPlan-side; (c) soft barrier as a stable default
   (E3 / OV-R10); (d) engine stability (E1, E3).
 - Goes to fin_plan: targeted tests per unit and sweep-only-in-sweep-units, lanes (web/UI, Rust, Python ingestion,
   tests+docs), per-lane `CARGO_TARGET_DIR`/sccache/worktrees, per-run `wave_size`/time box -> fin_plan ticket
   `T-t8Ls3q-run-throughput-test-scope-lanes-per-lane-build-dirs` and the next run's prompt.
 - Decision: no change to the AO built-in templates (`overseer-runner` stays codebase-neutral).
+- Update 2026-11-12: the FinPlan-side fixes landed (fin_plan `30b3fa85`: counting slots, warm per-slot cargo dirs,
+  targeted tests per unit, one sweep unit per wave). `T-Rs4Qv8` no longer blocks FinPlan. Highest-value AO work left
+  from this run: E1 (ENOSPC wedge), E2 asks 1-2 (descendant liveness), E3 (cycle crash) - the incidents were 14% of wall.
 - Run workspace `prompt.md`/`overseer-config.json` are per-run and untracked (the workspace is not a git repo); the
   per-run values go into the next run prompt.
 
