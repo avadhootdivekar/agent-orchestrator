@@ -3,7 +3,7 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-12 10:23 UTC (Claude, manager)
+- Last updated: 2026-11-12 13:20 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
 ## Owner rules in force
@@ -26,11 +26,10 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   | Round 1, ao (6 of 13 tasks) | $36.80 |
   | Calibration 1e (24 of 91 tasks) | $19.59 |
   
-- Finplan run `o-1eyd60-ux-focused-parallel` (`ao run` PID 289906) is at wave 16 of 30, checkpoint ck-15 said
-  "continue". Its Rust builds pushed the host load to 160 earlier.
-  - Its waves vary in length; recent ones took about 10 min.
-  - The host load is low between finplan builds (1.7 at 10:23 UTC); the hold comes from the run being alive.
-- **Both Harbor drivers are holding** (`[wait-hold]`). They launch only when the gate below clears.
+- Finplan run `o-1eyd60-ux-focused-parallel` **finished** at about 13:17 UTC: 30 waves, then closeout. Its
+  `final/` has closeout, verify and push reports.
+- **Both Harbor drivers are running again** (since about 13:17 UTC). They hold again automatically if a new finplan
+  `ao run` starts, or if the load goes above 16.
   - Gate: no finplan `ao run` alive (`/var/tmp/ao-harbor/pilot/hold-finplan.sh` exits 1), and 1-min load <= 16.
   - Drivers: `p2-ao.sh` (log `p2-ao.out`) and `p2-plain.sh` (log `p2-plain.out`), both in `/var/tmp/ao-harbor/pilot/`.
   - Restarted 2026-11-12 ~09:50 UTC with `--hold-while` and `--max-load 16`.
@@ -78,6 +77,12 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 13:17-13:20 UTC: **finplan run done; the gate cleared and both drivers launched by themselves.**
+  - The 3 late results were counted ("finished after start"), not rerun.
+  - ao: `obsidian-linter-link-format-conversion`. Plain: the `optique` retry and `igel-persist-feature-schema`.
+  - Load 2; `finplan-dev1` up.
+- 12:23-12:53 UTC: finplan reached w30/ck-30 (max_waves) with decision **closeout**. At 12:53 its last unit (w30-03 verify sweep) was still running; no needs-input. Load 2; drivers alive; `finplan-dev1` up. Watcher `bm0kfvyr7` reports when the run exits.
+- Idle checks 10:53-11:53 UTC: held. Finplan went from w17 to w24 (ck-23 continue). Its waves are now short; w24 is "document single blocker status", so the run looks close to the end. Load 3-105, depending on finplan builds. Drivers alive, `finplan-dev1` up.
 - 2026-11-12 10:23 UTC: finplan at w16/ck-15 (continue); load 1.7; both drivers holding; `finplan-dev1` up.
   - The 3 trials left in flight finished: ao koota-pair 0 (37/38, $7.58); plain prometheus 1 and psd 1.
   - Spend $100.60.
