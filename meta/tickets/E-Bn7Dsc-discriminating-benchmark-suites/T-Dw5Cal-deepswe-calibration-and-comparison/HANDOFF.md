@@ -17,13 +17,13 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   each batch, grep the job dirs for `sk-ant-oat`.
 
 ## State now
-- Spend so far: about **$126.91 of $500**, about $373 left.
+- Spend so far: about **$132.57 of $500**, about $367 left.
 
   | Item | Amount |
   |---|---|
   | Phase 0/1 | $33.06 |
   | Round 1, plain | $11.15 |
-  | Round 1, ao (8 of 13 tasks) | $42.76 |
+  | Round 1, ao (9 of 13 tasks) | $48.41 |
   | Calibration 1e (46 of 91 tasks) | $39.94 |
   
 - Finplan run `o-1eyd60-ux-focused-parallel` **finished** at about 13:17 UTC: 30 waves, then closeout. Its
@@ -42,7 +42,15 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
 - Calibration 1e: 45 tasks left (2 in flight).
   - The `optique-conditional-option-dependencies` retry ran and failed 35/36. Its first attempt had hit the ECR
     rate limit ($0) and is archived as `.infra-1`.
-- ao round 1: grading 7 done, **ao 1/7 vs fresh plain 2/7**. ao failed obsidian with the same 2 hidden tests as plain (58/60, $3.76). Regression tasks: go-critic solved ($2.19); pebble in flight; 4 left.
+- ao round 1: grading 7 done, **ao 1/7 vs fresh plain 2/7**. ao failed obsidian with the same 2 hidden tests as plain (58/60, $3.76). Regression tasks so far:
+  - go-critic solved ($2.19).
+  - **pebble failed, f2p 0/59 and p2p 0/44, $5.66, about 95 min.** Plain solved it.
+    - Cause: ao wrote its own `batch_durable_test.go`, and its `durability_test.go` uses a helper from that file
+      (`openBatchDurableDB`).
+    - The hidden `test.patch` replaces that file, so the package no longer builds and every test fails.
+    - This is a genuine model failure, not a harness bug. It is also a structural risk for ao: its dedicated
+      test-writing units create test files that can collide with hidden test files.
+  - 4 left.
 
 ## How to check and resume
 ```bash
@@ -65,7 +73,7 @@ ps -eo pid,args | grep -E '[b]udgeted.py'  # both drivers alive?
 | # | Step | Status | Budget |
 |---|---|---|---|
 | 1 | Round 1, plain fresh, 13 tasks | **done**: 7/13 solved; 3 verdicts flipped vs Phase 1 | $11.15 of $30 |
-| 2 | Round 1, ao, 13 tasks | 8/13 done: grading 1/7 (yjs solved); regression 1/1 so far | $42.76 of $104 |
+| 2 | Round 1, ao, 13 tasks | 9/13 done: grading 1/7 (yjs solved); regression 1/2 so far (pebble: build break) | $48.41 of $104 |
 | 3 | Calibration 1e, plain, 91 tasks | 46/91 done; running | $39.94 of $90 |
 | 4 | Rebuild sets over all 113 tasks (`sets/build_sets.py` on p1a, p1c-\*, p1e-\*) | after step 3 | $0 |
 | 5 | Round 2: new grading tasks, both arms, 1 attempt each | after step 4 | reserve |
