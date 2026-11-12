@@ -3,7 +3,7 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-12 17:23 UTC (Claude, manager)
+- Last updated: 2026-11-12 17:53 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
 ## Owner rules in force
@@ -20,14 +20,14 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - `--refresh-host-login` triggers the refresh once the token has expired and the pool is idle.
 
 ## State now
-- Spend so far: about **$148.21 of $500**, about $352 left.
+- Spend so far: about **$156.41 of $500**, about $344 left.
 
   | Item | Amount |
   |---|---|
   | Phase 0/1 | $33.06 |
   | Round 1, plain | $11.15 |
-  | Round 1, ao (10 of 13 tasks) | $51.80 |
-  | Calibration 1e (65 of 91 tasks) | $52.20 |
+  | Round 1, ao (11 of 13 tasks) | $54.98 |
+  | Calibration 1e (72 of 91 tasks) | $57.22 |
   
 - Finplan run `o-1eyd60-ux-focused-parallel` **finished** at about 13:17 UTC: 30 waves, then closeout. Its
   `final/` has closeout, verify and push reports.
@@ -42,7 +42,7 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - plain `prometheus-typed-label-sorting`: solved 17/17, $0.40.
   - plain `psd-tools-blend-range-api`: solved 45/45, $0.45.
   - No token in the job dirs; the secrets dir is empty.
-- Calibration 1e: 26 tasks left (2 in flight). So far 45 solved and 20 failed.
+- Calibration 1e: 19 tasks left (2 in flight). So far 51 solved and 21 failed.
   - The `optique-conditional-option-dependencies` retry ran and failed 35/36. Its first attempt had hit the ECR
     rate limit ($0) and is archived as `.infra-1`.
 - ao round 1: grading 7 done, **ao 1/7 vs fresh plain 2/7**. ao failed obsidian with the same 2 hidden tests as plain (58/60, $3.76). Regression tasks so far:
@@ -54,7 +54,8 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
     - This is a genuine model failure, not a harness bug. It is also a structural risk for ao: its dedicated
       test-writing units create test files that can collide with hidden test files.
   - fastapi solved ($3.38).
-  - kombu in flight since 17:12. Then eicrud and happy-dom.
+  - kombu solved ($3.18).
+  - eicrud in flight; happy-dom last.
 
 ## How to check and resume
 ```bash
@@ -77,8 +78,8 @@ ps -eo pid,args | grep -E '[b]udgeted.py'  # both drivers alive?
 | # | Step | Status | Budget |
 |---|---|---|---|
 | 1 | Round 1, plain fresh, 13 tasks | **done**: 7/13 solved; 3 verdicts flipped vs Phase 1 | $11.15 of $30 |
-| 2 | Round 1, ao, 13 tasks | 10/13 done: grading 1/7 (yjs solved); regression 2/3 so far (pebble: build break) | $51.80 of $104 |
-| 3 | Calibration 1e, plain, 91 tasks | 65/91 done (45 solved); running | $52.20 of $90 |
+| 2 | Round 1, ao, 13 tasks | 11/13 done: grading 1/7 (yjs solved); regression 3/4 so far (pebble: build break) | $54.98 of $104 |
+| 3 | Calibration 1e, plain, 91 tasks | 72/91 done (51 solved); running | $57.22 of $90 |
 | 4 | Rebuild sets over all 113 tasks (`sets/build_sets.py` on p1a, p1c-\*, p1e-\*) | after step 3 | $0 |
 | 5 | Round 2: new grading tasks, both arms, 1 attempt each | after step 4 | reserve |
 | 6 | Round 3: more attempts on grading tasks, in seeded order, until $500 | after step 5 | rest |
@@ -90,6 +91,8 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 17:53 UTC: ao kombu 1 (76/76, $3.18); eicrud in flight. Calibration 72/91 (51 solved). Spend $156.41.
+  Load 5.3.
 - 17:12-17:23 UTC: the host login refreshed by itself (8 h). Both pools resumed: ao kombu; plain actionlint 1,
   koota-query, dasel. Calibration 65/91; spend $148.21.
 - 16:53 UTC: both pools idle at their login thresholds; token 0.39 h, so `[refresh-login]` is due around 17:13.
