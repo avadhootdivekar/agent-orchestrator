@@ -15,6 +15,13 @@ With `--auth host` a task starts only while the host login has `--min-token-hour
 login is refreshed by Claude Code itself; `--refresh-host-login` lets the driver trigger
 that (one tiny `claude -p` call on Haiku) once the token has expired and nothing is running.
 
+Infra failures that cost nothing (no trial result, or every trial ended in a non-attempt
+exception at $0: image pull rate limits, Docker start problems) are retried: the job dir is
+moved to `<job>.infra-<n>` and the task requeued after `--retry-delay` seconds, at most
+`--infra-retries` times. This also applies on resume. `--max-load L` holds new launches
+while the host's 1-minute load average is above L (a shared host: Harbor's 30 s Docker
+network-control probe fails under heavy load, and a busy host also skews wall times).
+
 `--prune-solved-images DATASET_DIR`: after a task's job finishes with every trial solved,
 remove its Docker image (task.toml `docker_image`), so a long calibration pool does not
 fill the disk; failed tasks keep their image for the comparison.
@@ -99,6 +106,36 @@ def all_solved(trials: list[dict]) -> bool:
     return bool(rewards) and all(r == 1 for r in rewards)
 
 
+# Exceptions that are a legitimate attempt (the trial counts), as in summarize.py.
+ATTEMPT_EXCEPTIONS = frozenset({"AgentTimeoutError"})
+
+
+def free_infra_failure(trials: list[dict]) -> bool:
+    """True when the job produced nothing to count and spent nothing: no trial result at
+    all, or every trial ended in a non-attempt exception without a reward at $0."""
+    if not trials:
+        return True
+    for t in trials:
+        exc = (t.get("exception_info") or {}).get("exception_type")
+        reward = ((t.get("verifier_result") or {}).get("rewards") or {}).get("reward")
+        if reward is not None or not exc or exc in ATTEMPT_EXCEPTIONS or trial_cost(t) > 0:
+            return False
+    return True
+
+
+def archive_job(job: str) -> str | None:
+    """Move a job dir aside as `<job>.infra-<n>`; returns the new name (None if absent)."""
+    src = AO_HARBOR_ROOT / "jobs" / job
+    if not src.exists():
+        return None
+    n = 1
+    while (AO_HARBOR_ROOT / "jobs" / f"{job}.infra-{n}").exists():
+        n += 1
+    dst = src.with_name(f"{job}.infra-{n}")
+    src.rename(dst)
+    return dst.name
+
+
 def summarize(job: str) -> str:
     parts = []
     for t in job_trials(job):
@@ -136,6 +173,9 @@ def main() -> int:
         metavar="DATASET_DIR",
         help="docker rmi a task's image once every trial of it is solved",
     )
+    ap.add_argument("--infra-retries", type=int, default=3)
+    ap.add_argument("--retry-delay", type=float, default=300.0, help="seconds")
+    ap.add_argument("--max-load", type=float, help="hold launches above this 1-min loadavg")
     ap.add_argument("--run-sh", type=Path, default=RUN_SH, help=argparse.SUPPRESS)  # tests
     args = ap.parse_args()
 
@@ -145,16 +185,22 @@ def main() -> int:
     running: dict[str, subprocess.Popen[bytes]] = {}
     spent = 0.0
     pending = []
+    retries: dict[str, int] = {}
+    not_before: dict[str, float] = {}
     for task in tasks:
         job = f"{args.prefix}-{task}"
         done = job_trials(job)
-        if done:  # resume: count it, do not rerun
+        if done and free_infra_failure(done):  # resume: an infra failure is rerun
+            print(f"[infra-archive] {task}: {summarize(job)} -> {archive_job(job)}", flush=True)
+            pending.append(task)
+        elif done:  # resume: count it, do not rerun
             spent += sum(trial_cost(t) for t in done)
             print(f"[skip-done] {task}: {summarize(job)}", flush=True)
         else:
             pending.append(task)
     print(f"[start] {len(pending)} to run, spent so far ${spent:.2f}", flush=True)
     waiting_logged = False
+    load_logged = False
 
     while pending or running:
         for task, proc in list(running.items()):
@@ -168,6 +214,16 @@ def main() -> int:
                 f"[done] {task} exit={proc.returncode}: {summarize(job)} | total ${spent:.2f}",
                 flush=True,
             )
+            if free_infra_failure(trials) and retries.get(task, 0) < args.infra_retries:
+                retries[task] = retries.get(task, 0) + 1
+                not_before[task] = time.time() + args.retry_delay
+                pending.append(task)
+                print(
+                    f"[infra-retry] {task} #{retries[task]} in {args.retry_delay:.0f}s "
+                    f"(job moved to {archive_job(job)})",
+                    flush=True,
+                )
+                continue
             if args.prune_solved_images and all_solved(trials):
                 image = task_image(args.prune_solved_images, task)
                 if image:
@@ -184,10 +240,20 @@ def main() -> int:
                 flush=True,
             )
         waiting_logged = token_short
-        while pending and len(running) < args.lanes and not token_short:
+        load = os.getloadavg()[0]
+        load_high = args.max_load is not None and load > args.max_load
+        if load_high and pending and not load_logged:
+            print(f"[wait-load] 1-min load {load:.0f} > {args.max_load:g}", flush=True)
+        load_logged = load_high
+        now = time.time()
+        while pending and len(running) < args.lanes and not token_short and not load_high:
             if spent + (len(running) + 1) * args.cap_usd > args.total_usd:
                 break
-            task = pending.pop(0)
+            ready = [t for t in pending if not_before.get(t, 0) <= now]
+            if not ready:
+                break
+            task = ready[0]
+            pending.remove(task)
             job = f"{args.prefix}-{task}"
             cmd = [
                 str(args.run_sh), "--arm", args.arm, "--model", args.model,
@@ -200,7 +266,7 @@ def main() -> int:
             log = (logs / f"{task}.log").open("wb")
             running[task] = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)  # noqa: S603
             print(f"[launch] {task} (in flight {len(running)}, spent ${spent:.2f})", flush=True)
-        if pending and not running and not token_short:
+        if pending and not running and spent + args.cap_usd > args.total_usd:
             # Not even one more cap fits: stop.
             break
         time.sleep(POLL_SECONDS)

@@ -25,6 +25,14 @@ while [ $# -gt 0 ]; do
 done
 var="FAKE_REWARD_${task//-/_}"; reward="${!var:-1}"
 mkdir -p "$AO_HARBOR_ROOT/jobs/$job/t1"
+# FAKE_INFRA_<task>=N: the first N runs end in a $0 infra exception (e.g. an image pull limit).
+ivar="FAKE_INFRA_${task//-/_}"; count="$AO_HARBOR_ROOT/runs-$task"
+n=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$count"
+if [ "$n" -le "${!ivar:-0}" ]; then
+  printf '{"agent_result":null,"exception_info":{"exception_type":"RuntimeError"}}' \
+    > "$AO_HARBOR_ROOT/jobs/$job/t1/result.json"
+  exit 1
+fi
 printf '{"agent_result":{"cost_usd":0.5},"verifier_result":{"rewards":{"reward":%s}}}' \
   "$reward" > "$AO_HARBOR_ROOT/jobs/$job/t1/result.json"
 """
@@ -126,3 +134,51 @@ def test_total_limit_still_stops_before_a_cap_could_overshoot(tmp_path: Path) ->
     cmd[cmd.index("--total-usd") + 1] = "8.6"  # after $1.00 spent, a third $8 cap would overshoot
     out = subprocess.run(cmd, env=env, capture_output=True, text=True, check=True, timeout=60)
     assert "[skipped-budget] c" in out.stdout
+
+
+def test_free_infra_failures_are_archived_and_retried(tmp_path: Path) -> None:
+    env = _setup(tmp_path, ["flaky", "steady"], token_hours=8)
+    env["FAKE_INFRA_flaky"] = "2"
+    cmd = _cmd(tmp_path, "--retry-delay", "0")
+    out = subprocess.run(cmd, env=env, capture_output=True, text=True, check=True, timeout=60)
+    jobs = Path(env["AO_HARBOR_ROOT"]) / "jobs"
+    assert out.stdout.count("[infra-retry] flaky") == 2
+    assert (jobs / "p-flaky.infra-1").is_dir() and (jobs / "p-flaky.infra-2").is_dir()
+    assert "[end] total $1.00" in out.stdout  # the final flaky attempt + steady
+
+
+def test_resume_archives_an_earlier_infra_failure(tmp_path: Path) -> None:
+    env = _setup(tmp_path, ["t"], token_hours=8)
+    old = Path(env["AO_HARBOR_ROOT"]) / "jobs" / "p-t" / "x"
+    old.mkdir(parents=True)
+    (old / "result.json").write_text(
+        json.dumps({"exception_info": {"exception_type": "ValueError"}, "agent_result": None})
+    )
+    out = subprocess.run(
+        _cmd(tmp_path), env=env, capture_output=True, text=True, check=True, timeout=60
+    )
+    assert "[infra-archive] t" in out.stdout and "[done] t" in out.stdout
+    assert (Path(env["AO_HARBOR_ROOT"]) / "jobs" / "p-t.infra-1").is_dir()
+
+
+def test_infra_retries_are_bounded(tmp_path: Path) -> None:
+    env = _setup(tmp_path, ["dead"], token_hours=8)
+    env["FAKE_INFRA_dead"] = "99"
+    cmd = _cmd(tmp_path, "--retry-delay", "0", "--infra-retries", "1")
+    out = subprocess.run(cmd, env=env, capture_output=True, text=True, check=True, timeout=60)
+    assert out.stdout.count("[launch] dead") == 2
+
+
+def test_high_load_holds_launches(tmp_path: Path) -> None:
+    env = _setup(tmp_path, ["t"], token_hours=8)
+    proc = subprocess.Popen(
+        _cmd(tmp_path, "--max-load", "-1"), env=env, stdout=subprocess.PIPE, text=True
+    )
+    try:
+        time.sleep(1.0)
+        assert proc.poll() is None
+        assert not (Path(env["AO_HARBOR_ROOT"]) / "argv.log").exists()
+    finally:
+        proc.kill()
+        stdout, _ = proc.communicate(timeout=10)
+    assert "[wait-load]" in stdout
