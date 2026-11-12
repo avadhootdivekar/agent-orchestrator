@@ -10,3 +10,4 @@
 
 ## Risks / Blockers
 - Engine fixes need an owner and a human `install.sh`; see TASK.md Risks.
+- 2026-11-12: E6 throughput section added (measured numbers, 5 proposals, repo split).

@@ -112,6 +112,28 @@ Asks (template `overseer-runner` + engine hooks):
 5. Prefer a shared cargo target per lane (or sccache) over per-task private targets when a lane builds the same
    workspace; document in the overseer-runner template.
 
+### E6 - Throughput: the run was serialised by a global heavy lock, waited more than it worked, and barriered on stragglers
+
+Measured on run `o-k6shov-ux-complete-500` (2026-11-10 11:31 -> 2026-11-11 ~16:00 UTC; `state.json` + `w*/attempt-*/transcript.jsonl`):
+- 151 task attempts, 78.7 task-hours in 26.5 h wall = avg concurrency 2.97 (peak 10). Concurrency was 1 for 31% of wall-clock and 0 for 14% (about 3.8 h = the three incidents E1/E3 plus T-Rk4Wn7 stranding).
+- 68% of agent time (55 of ~81 task-hours across 161 attempts) was in Bash commands >= 2 min that were polling/waiting (`until grep -q EXIT= log; do sleep 10; done`). 107 of 161 attempts reference `/tmp/finplan-heavy.lock`: Rust build/test is effectively concurrency 1. Not split: lock queueing vs real compile time.
+- Wave tails (only the slowest task running): w03 109 min, w05 86 min, w09 73 min, w14 63 min. `wave_size` 15 configured, real waves 4-10 tasks. Soft barriers only worked from w14.
+- Median task 22 min vs 14-15 min in o-12ln4x / o-kpor5a (heavier strong-test requirement). Output: ~9 net Done tickets in 27 h; no net speed gain vs o-12ln4x (213 tasks / 23.6 h).
+
+Where the fixes live (not all are AO):
+- AO engine/templates (this repo): items 1b, 3, 5 below and `templates/builtin/overseer-runner/{instructions/10-work-unit.md,20-checkpoint.md,overseer-contract.md,README.md}` for 2, 4.
+- Run workspace (ao-runner-finplan `workflows/overseer-runner/runs/<run>/{prompt.md,overseer-config.json}`): per-run lane and wave-size policy for 3, 4. This workspace is not a git repo.
+- fin_plan repo: per-lane `CARGO_TARGET_DIR`/sccache/worktree convention and test-scope wording in `CLAUDE.md` and `scripts/native-live-stack.sh` (1a, 2). Needs its own fin_plan ticket on the product branch.
+
+Proposed changes (highest payoff first):
+1. Remove the single global heavy lock. (a) fin_plan: per-lane `CARGO_TARGET_DIR`, shared sccache, one git worktree per lane (host 32 cores / 62 GB). (b) AO: engine-managed named resource slots (build slot, test-Mongo slot, ports) declared in the manifest, replacing the flock-in-brief-prose convention; a unit gets its slot before start, so no agent time is spent polling.
+2. Targeted tests per build unit (touched test binary / Playwright spec only); the whole-workspace sweep only in dedicated sweep and final-verify units, run in parallel with the next build wave. Strong-test and Opus-review gates unchanged.
+3. Rolling waves: soft barrier as the default (needs the OV-R10 stability fix from E3); per-task time box (suggest 45 min) after which the unit is split or its tail deferred; make configured `wave_size` effective.
+4. Lanes in the Overseer prompt/manifest (web/UI, Rust, Python ingestion, tests+docs) with a per-lane cap and the 75% build ratio; tests and docs for a landed task run as follow-up units while development continues.
+5. No agent polling: the agent starts the command in the background, ends its turn with a "waiting on X" status, and the engine resumes it on completion (also the `w14-04` fix from E2). Pure AO work.
+
+Safety: item 3 and 4 raise parallel load on Mongo, ports and disk; item 1 must come with the E5 disk floor and scratch cleanup, or concurrent cargo lanes refill the disk (see memory: 78 GB in 10 min).
+
 ## Acceptance Criteria
 - [ ] AC1 (E1): test with a temp workspace on a size-limited tmpfs: fill it mid-run; engine pauses/alarms/exits with a
   persisted reason, state.json still valid JSON, no silent hang >1 tick.
@@ -125,6 +147,8 @@ Asks (template `overseer-runner` + engine hooks):
   digest shows `stage: stabilize`, `allowed_decisions` per contract, and the note text; `prompt.md` hash untouched.
 - [ ] AC7 (E5): `unit-gate` disk floor test; scratch-cleanup epilogue test on a killed task; template instruction text
   updated + guard test that the briefs no longer ask for per-unit workspace sweeps.
+
+- [ ] (E6) A replay or synthetic multi-lane run shows heavy build/test units from different lanes running concurrently (no shared global flock), agent time spent in >= 2 min polling drops below 25% of task time, and no wave ends with a single task running more than 20% of wave wall-time except by design; strong-test/Opus gates still run.
 
 ## Risks / Dependencies
 - Self-hosting rule: engine edits need a human `install.sh`; test only against temp workspaces. Land via branch + PR.
