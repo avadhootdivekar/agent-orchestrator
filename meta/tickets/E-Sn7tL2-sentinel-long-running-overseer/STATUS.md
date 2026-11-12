@@ -80,3 +80,4 @@
 
 - By: claude-sonnet-5-5 · Role: tester · Date: 2026-11-11 · Comment: **T-Rk4Wn7 (bug) closed: D1-D4 + CTL-SCHEMA landed with regression tests (independently verified on HEAD, w21-07).** One open OWNER question (not a blocker): `defaults.fail_fast` opt-out for D3; recommendation keep continue-on-failure. Live engine needs the human `install.sh` step.
 - 2026-11-11: filed T-Fp9Hng-finplan-run-wedge-enospc-injection-cycle-and-operator-controls (second incident: ENOSPC wedge, idle-kill vs child work, injection cycle, operator controls, heavy-resource policy).
+- 2026-11-12: T-Rs4Qv8-named-resources-and-concurrency-groups filed (generic resource slots + concurrency groups, from T-Fp9Hng E5/E6). T-Fp9Hng E5/E6 narrowed: test scope/lanes/target dirs moved to fin_plan; no template change.

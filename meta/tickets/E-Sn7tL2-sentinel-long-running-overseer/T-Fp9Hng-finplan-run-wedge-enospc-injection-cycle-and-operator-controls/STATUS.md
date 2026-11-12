@@ -11,3 +11,4 @@
 ## Risks / Blockers
 - Engine fixes need an owner and a human `install.sh`; see TASK.md Risks.
 - 2026-11-12: E6 throughput section added (measured numbers, 5 proposals, repo split).
+- 2026-11-12: E5/E6 narrowed per owner decision (test-scope/lanes/per-lane dirs -> fin_plan ticket T-t8Ls3q; resources -> T-Rs4Qv8; no template change).

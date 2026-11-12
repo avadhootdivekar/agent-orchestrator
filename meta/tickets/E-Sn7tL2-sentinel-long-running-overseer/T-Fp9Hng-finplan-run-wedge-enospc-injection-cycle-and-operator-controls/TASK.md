@@ -98,21 +98,21 @@ at the next checkpoint barrier; (c) document the supported levers in `overseer-c
   repeated per unit and again per wave. Cost: wall-clock and disk (98 GB private target dir for one task).
 - Per-task private `CARGO_TARGET_DIR`/scratch dirs are an instruction ("delete after"); a task that finished or was
   killed leaked 98 GB and filled the disk (root cause of E1).
-Asks (template `overseer-runner` + engine hooks):
+Asks (engine hooks only; the template is not changed):
 1. `unit-gate` pre-hook: refuse to dispatch a unit when free disk < floor (configurable, default 20 GB); log wait.
 2. Post-hook / task epilogue hook to remove paths a unit declares in a `scratch:` list (target dirs, containers),
    including on kill/fail.
-3. Template guidance (instructions `10-work-unit.md`, `20-checkpoint.md`, contract): build units run only targeted
-   tests (changed crate/test file/one jest or Playwright spec + their red-first/mutation controls); workspace-wide
-   sweeps only in `sweep`/`final-verify` units. Keep the Done gate unchanged (done-check still needs whole-suite
-   evidence) - only WHEN it is produced changes.
+3. (MOVED OUT of AO, 2026-11-12) Test-scope guidance (targeted tests per unit, sweeps only in sweep/final-verify units)
+   is codebase policy, not an AO concern; the built-in overseer-runner template has no cargo/jest text and asks for
+   no workspace sweeps - that demand is in the FinPlan run prompt and `fin_plan/CLAUDE.md`. See the fin_plan ticket
+   `T-t8Ls3q-run-throughput-test-scope-lanes-per-lane-build-dirs`. Decision: NO change to AO templates.
 4. Optional engine feature: named resource locks declared on a task (`resources: [heavy-build]`) acquired by the
    engine (not the LLM), with wait time recorded and excluded from idle/stuck/timeout accounting, and a configurable
    concurrency (e.g. N heavy lanes) instead of a hard singleton.
-5. Prefer a shared cargo target per lane (or sccache) over per-task private targets when a lane builds the same
-   workspace; document in the overseer-runner template.
+5. (MOVED OUT of AO) per-lane cargo target / sccache / worktrees are fin_plan conventions (same fin_plan ticket).
+   Item 4 above is superseded by `T-Rs4Qv8-named-resources-and-concurrency-groups` (new, this epic).
 
-### E6 - Throughput: the run was serialised by a global heavy lock, waited more than it worked, and barriered on stragglers
+### E6 - Throughput analysis (measurements and where each fix belongs)
 
 Measured on run `o-k6shov-ux-complete-500` (2026-11-10 11:31 -> 2026-11-11 ~16:00 UTC; `state.json` + `w*/attempt-*/transcript.jsonl`):
 - 151 task attempts, 78.7 task-hours in 26.5 h wall = avg concurrency 2.97 (peak 10). Concurrency was 1 for 31% of wall-clock and 0 for 14% (about 3.8 h = the three incidents E1/E3 plus T-Rk4Wn7 stranding).
@@ -120,19 +120,19 @@ Measured on run `o-k6shov-ux-complete-500` (2026-11-10 11:31 -> 2026-11-11 ~16:0
 - Wave tails (only the slowest task running): w03 109 min, w05 86 min, w09 73 min, w14 63 min. `wave_size` 15 configured, real waves 4-10 tasks. Soft barriers only worked from w14.
 - Median task 22 min vs 14-15 min in o-12ln4x / o-kpor5a (heavier strong-test requirement). Output: ~9 net Done tickets in 27 h; no net speed gain vs o-12ln4x (213 tasks / 23.6 h).
 
-Where the fixes live (not all are AO):
-- AO engine/templates (this repo): items 1b, 3, 5 below and `templates/builtin/overseer-runner/{instructions/10-work-unit.md,20-checkpoint.md,overseer-contract.md,README.md}` for 2, 4.
-- Run workspace (ao-runner-finplan `workflows/overseer-runner/runs/<run>/{prompt.md,overseer-config.json}`): per-run lane and wave-size policy for 3, 4. This workspace is not a git repo.
-- fin_plan repo: per-lane `CARGO_TARGET_DIR`/sccache/worktree convention and test-scope wording in `CLAUDE.md` and `scripts/native-live-stack.sh` (1a, 2). Needs its own fin_plan ticket on the product branch.
-
-Proposed changes (highest payoff first):
-1. Remove the single global heavy lock. (a) fin_plan: per-lane `CARGO_TARGET_DIR`, shared sccache, one git worktree per lane (host 32 cores / 62 GB). (b) AO: engine-managed named resource slots (build slot, test-Mongo slot, ports) declared in the manifest, replacing the flock-in-brief-prose convention; a unit gets its slot before start, so no agent time is spent polling.
-2. Targeted tests per build unit (touched test binary / Playwright spec only); the whole-workspace sweep only in dedicated sweep and final-verify units, run in parallel with the next build wave. Strong-test and Opus-review gates unchanged.
-3. Rolling waves: soft barrier as the default (needs the OV-R10 stability fix from E3); per-task time box (suggest 45 min) after which the unit is split or its tail deferred; make configured `wave_size` effective.
-4. Lanes in the Overseer prompt/manifest (web/UI, Rust, Python ingestion, tests+docs) with a per-lane cap and the 75% build ratio; tests and docs for a landed task run as follow-up units while development continues.
-5. No agent polling: the agent starts the command in the background, ends its turn with a "waiting on X" status, and the engine resumes it on completion (also the `w14-04` fix from E2). Pure AO work.
-
-Safety: item 3 and 4 raise parallel load on Mongo, ports and disk; item 1 must come with the E5 disk floor and scratch cleanup, or concurrent cargo lanes refill the disk (see memory: 78 GB in 10 min).
+Conclusion (2026-11-12, owner discussion): most throughput fixes are NOT AO changes. Rule used: AO owns a mechanism only
+if it is meaningful for ANY workflow (software or not); how to chunk, scope tests or name lanes is policy of the target
+repo/run.
+- Stays in AO (generic): (a) named resources with capacity + engine-side acquisition, with concurrency groups as the same
+  mechanism -> new ticket `T-Rs4Qv8-named-resources-and-concurrency-groups`; (b) "turn ended, background command running,
+  engine resumes the agent on completion" (the E2 fix, extended; no agent polling); (c) soft barrier as a stable default
+  (E3 / OV-R10); (d) engine stability (E1, E3).
+- Goes to fin_plan: targeted tests per unit and sweep-only-in-sweep-units, lanes (web/UI, Rust, Python ingestion,
+  tests+docs), per-lane `CARGO_TARGET_DIR`/sccache/worktrees, per-run `wave_size`/time box -> fin_plan ticket
+  `T-t8Ls3q-run-throughput-test-scope-lanes-per-lane-build-dirs` and the next run's prompt.
+- Decision: no change to the AO built-in templates (`overseer-runner` stays codebase-neutral).
+- Run workspace `prompt.md`/`overseer-config.json` are per-run and untracked (the workspace is not a git repo); the
+  per-run values go into the next run prompt.
 
 ## Acceptance Criteria
 - [ ] AC1 (E1): test with a temp workspace on a size-limited tmpfs: fill it mid-run; engine pauses/alarms/exits with a
@@ -145,10 +145,8 @@ Safety: item 3 and 4 raise parallel load on Mongo, ports and disk; item 1 must c
 - [ ] AC5 (E3): soft-barrier requirement is the same at check time as at digest time.
 - [ ] AC6 (E4): `ao resume --operator-note` and `request-closeout --stabilize` work on a temp run; the next checkpoint
   digest shows `stage: stabilize`, `allowed_decisions` per contract, and the note text; `prompt.md` hash untouched.
-- [ ] AC7 (E5): `unit-gate` disk floor test; scratch-cleanup epilogue test on a killed task; template instruction text
-  updated + guard test that the briefs no longer ask for per-unit workspace sweeps.
-
-- [ ] (E6) A replay or synthetic multi-lane run shows heavy build/test units from different lanes running concurrently (no shared global flock), agent time spent in >= 2 min polling drops below 25% of task time, and no wave ends with a single task running more than 20% of wave wall-time except by design; strong-test/Opus gates still run.
+- [ ] AC7 (E5): `unit-gate` disk floor test; scratch-cleanup epilogue test on a killed task. (Template text is NOT changed.)
+- [ ] (E6) Tracked in `T-Rs4Qv8` (resources/groups, no polling) - no separate AO acceptance here; this ticket keeps the measurements.
 
 ## Risks / Dependencies
 - Self-hosting rule: engine edits need a human `install.sh`; test only against temp workspaces. Land via branch + PR.
