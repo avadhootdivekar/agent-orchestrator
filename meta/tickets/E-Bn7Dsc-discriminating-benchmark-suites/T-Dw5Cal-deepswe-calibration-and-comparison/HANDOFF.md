@@ -3,7 +3,7 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-12 18:53 UTC (Claude, manager)
+- Last updated: 2026-11-12 19:35 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
 ## Owner rules in force
@@ -20,70 +20,67 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - `--refresh-host-login` triggers the refresh once the token has expired and the pool is idle.
 
 ## State now
-- Spend so far: about **$172.20 of $500**, about $328 left.
+- Spend so far: about **$177.20 of $500**, about $323 left.
 
   | Item | Amount |
   |---|---|
   | Phase 0/1 | $33.06 |
   | Round 1, plain | $11.15 |
-  | Round 1, ao (13 of 13 tasks, done) | $61.66 |
-  | Calibration 1e (84 of 91 tasks) | $66.33 |
-  
-- Finplan run `o-1eyd60-ux-focused-parallel` **finished** at about 13:17 UTC: 30 waves, then closeout. Its
-  `final/` has closeout, verify and push reports.
-- **Both Harbor drivers are running again** (since about 13:17 UTC). They hold again automatically if a new finplan
-  `ao run` starts, or if the load goes above 16.
-  - Gate: no finplan `ao run` alive (`/var/tmp/ao-harbor/pilot/hold-finplan.sh` exits 1), and 1-min load <= 16.
-  - Drivers: `p2-ao.sh` (log `p2-ao.out`) and `p2-plain.sh` (log `p2-plain.out`), both in `/var/tmp/ao-harbor/pilot/`.
-  - Restarted 2026-11-12 ~09:50 UTC with `--hold-while` and `--max-load 16`.
-- The 3 trials left in flight at the stop have finished. The restarted drivers count these results at launch time
-  and do not rerun them:
-  - ao `koota-pair-relation-tracking`: **failed** 37/38, $7.58. The Phase 1 ao attempt solved it.
-  - plain `prometheus-typed-label-sorting`: solved 17/17, $0.40.
-  - plain `psd-tools-blend-range-api`: solved 45/45, $0.45.
-  - No token in the job dirs; the secrets dir is empty.
-- Calibration 1e: 7 tasks left (2 in flight). So far 60 solved and 24 failed.
-  - The `optique-conditional-option-dependencies` retry ran and failed 35/36. Its first attempt had hit the ECR
-    rate limit ($0) and is archived as `.infra-1`.
-- ao round 1: grading 7 done, **ao 1/7 vs fresh plain 2/7**. ao failed obsidian with the same 2 hidden tests as plain (58/60, $3.76). Regression tasks so far:
-  - go-critic solved ($2.19).
-  - **pebble failed, f2p 0/59 and p2p 0/44, $5.66, about 95 min.** Plain solved it.
-    - Cause: ao wrote its own `batch_durable_test.go`, and its `durability_test.go` uses a helper from that file
-      (`openBatchDurableDB`).
-    - The hidden `test.patch` replaces that file, so the package no longer builds and every test fails.
-    - This is a genuine model failure, not a harness bug. It is also a structural risk for ao: its dedicated
-      test-writing units create test files that can collide with hidden test files.
-  - fastapi solved ($3.38).
-  - kombu solved ($3.18).
-  - eicrud solved ($3.46).
-  - happy-dom failed 13/14, the same as plain.
-  - **The ao pool is done; the ao lane is idle until round 2.**
+  | Round 1, ao | $61.66 |
+  | Calibration 1e (91 tasks, done) | $71.33 |
+  | Round 2 | running |
+
+- **Round 2 is running** (started 2026-11-12 ~19:30 UTC).
+  - Tasks: the 26 new grading tasks from the full calibration, in seeded order:
+    `benchmarks/harbor/sets/deepswe-v1.1-p2-r2.txt`.
+  - ao: `p2r2-ao.sh` (log `p2r2-ao.out`, prefix `p2-r2-ao-sonnet`), 2 lanes, limit $170. Expected about $150
+    (ao's average on grading tasks is $5.79).
+  - plain: `p2r2-plain.sh` (log `p2r2-plain.out`, prefix `p2-r2-cc-sonnet`), 1 lane, limit $45. Expected about $26.
+  - At most 3 DeepSWE containers. Both limits together still leave at least $108, which keeps the Marathon option
+    open.
+  - Gate: `hold-finplan.sh` (any finplan `ao run`) and load <= 16. Login thresholds as above.
+- **Calibration (113 tasks) done:** 80 solved and 33 failed, 0 excluded.
+  - Sets file: `benchmarks/harbor/sets/deepswe-v1.1-sonnet-5.5.json`, built from p1a, p1c-\* and p1e-\* only.
+    The comparison attempts are not used for selection.
+  - Grading set: the 7 round-1 tasks plus 26 new ones.
+- **Round 1 done:** plain 7/13 vs ao 5/13. ao was better on 0 tasks and plain on 2 (bandit, pebble). Details:
+  STATUS.md.
+  - Note on ao's pebble loss: its own test file collided with the hidden `test.patch`, so the package no longer
+    built (0/59, 0/44).
+- **Disk (2026-11-12 19:28 UTC):** `/usr` (Docker root) was 95% full.
+  - The cause was finplan Rust slot targets in `/usr/avadhoot/finplan-slot-target`, 118 GB.
+  - Idle slots `cargo-1` and `cargo-2` (65 GB) were removed while holding their `res-slot.sh` flock. Slot 0 was in
+    use by a finplan session and left alone. The owner allowed clearing Rust targets earlier.
+  - Now 89 GB free (82%).
+- Finplan run `o-1eyd60` finished at 13:17 UTC. A finplan Claude session still runs cargo builds outside `ao run`;
+  the load gate covers them.
 
 ## How to check and resume
 ```bash
 cd /var/tmp/ao-harbor/pilot
-tail -n 5 p2-ao.out p2-plain.out          # [wait-hold] / [launch] / [done] / [end]
-./hold-finplan.sh; echo $?                 # 0 = finplan ao run still alive (hold)
-uptime                                     # launches need 1-min load <= 16
-ps -eo pid,args | grep -E '[b]udgeted.py'  # both drivers alive?
+tail -n 5 p2r2-ao.out p2r2-plain.out      # [wait-*] / [launch] / [done] / [end]
+./hold-finplan.sh; echo $?                 # 0 = a finplan ao run is alive (hold)
+uptime; df -h /usr | tail -1               # launches need 1-min load <= 16; watch disk
+ps -eo pid,args | grep -E '[b]udgeted.py'  # drivers alive?
 ```
-- If a driver died, restart it at any time with `./p2-ao.sh >> p2-ao.out 2>&1` (or the plain one). Resume is
-  safe even with trials still running:
-  - finished jobs are skipped;
-  - running ones are deferred;
-  - killed or $0-infra ones are archived to `<job>.infra-<n>` and rerun.
-- To stop new launches without losing running trials, SIGKILL the `p2-*.sh` bash and its `budgeted.py`, using
-  explicit PIDs. Never `pkill -f` a pattern that appears in your own command line.
+- If a driver died, restart it with `./p2r2-ao.sh >> p2r2-ao.out 2>&1` (or the plain one). Resume is safe even
+  with trials still running:
+  - finished jobs are counted;
+  - trials still running hold a lane and a cap until their result lands;
+  - killed or $0-infra jobs are archived to `<job>.infra-<n>` and rerun.
+- To stop new launches without losing running trials, SIGKILL the driver's bash and `budgeted.py` by explicit PID.
+  Never `pkill -f` a pattern that appears in your own command line.
 - Per-task logs: `pilot/<prefix>/<task>.log`. Jobs: `/var/tmp/ao-harbor/jobs/<prefix>-<task>`.
+- Round 1 logs: `p2-ao.out` and `p2-plain.out` (pools ended).
 
 ## Roadmap (pre-registered; details in TASK.md Phase 2)
 | # | Step | Status | Budget |
 |---|---|---|---|
 | 1 | Round 1, plain fresh, 13 tasks | **done**: 7/13 solved; 3 verdicts flipped vs Phase 1 | $11.15 of $30 |
 | 2 | Round 1, ao, 13 tasks | **done**: grading 1/7, regression 4/6. Plain was better on 2 tasks, ao on none, 11 ties | $61.66 of $104 |
-| 3 | Calibration 1e, plain, 91 tasks | 84/91 done (60 solved); running | $66.33 of $90 |
-| 4 | Rebuild sets over all 113 tasks (`sets/build_sets.py` on p1a, p1c-\*, p1e-\*) | after step 3 | $0 |
-| 5 | Round 2: new grading tasks, both arms, 1 attempt each | after step 4 | reserve |
+| 3 | Calibration 1e, plain, 91 tasks | **done**: all 113 tasks, 80 solved and 33 failed | $71.33 of $90 |
+| 4 | Rebuild sets over all 113 tasks (`sets/build_sets.py` on p1a, p1c-\*, p1e-\*) | **done**: grading 33, regression 80 | $0 |
+| 5 | Round 2: 26 new grading tasks, both arms, 1 attempt each | **running** | ao $170 limit, plain $45 limit |
 | 6 | Round 3: more attempts on grading tasks, in seeded order, until $500 | after step 5 | rest |
 | 7 | Report with `compare.py` (time rule; flag attempts run under high load) and update STATUS/TASK/epic/README/KB | at the end | $0 |
 | 8 | SWE-Marathon | only if >= $100 is left after steps 1-5 | |
@@ -93,6 +90,11 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 19:20-19:35 UTC: **calibration done** ($71.33): 113 tasks, 80 solved and 33 failed. Sets rebuilt; no token
+  leaks.
+  - Disk was 95% full. Cleared idle finplan Rust slots 1 and 2 (65 GB) under their flock; now 89 GB free.
+  - **Round 2 started:** 26 tasks; ao on 2 lanes, plain on 1.
+- 19:23 UTC: calibration nearly done (`go-genai` is the last task in flight); plain calibration about $70.9. Load 7.8.
 - 18:53 UTC: calibration 84/91 (60 solved, 24 failed); spend $172.20. The ao lane is idle until round 2.
 - 18:40 UTC: **round 1 complete.** `compare.py` (time rule; no time fails):
   | Arm | Solved | $/attempt | Median min |

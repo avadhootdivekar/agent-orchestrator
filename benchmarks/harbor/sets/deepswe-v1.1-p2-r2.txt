@@ -1,0 +1,29 @@
+# T-Dw5Cal Phase 2 round 2: grading tasks new from the full calibration (Phase 1e), both arms, 1 attempt each.
+# 26 tasks = 33-task grading set (deepswe-v1.1-sonnet-5.5.json, 2026-11-12) minus the 7 round-1 grading tasks.
+# Order: sorted, then random.Random(20261113).shuffle (pre-registered seed; same order for both arms).
+participle-grammar-conflict-analysis
+gql-incremental-graphql-delivery
+vulture-persistent-analysis-cache
+katex-multicolumn-array-spans
+effect-sse-httpapi-streaming
+koota-entity-snapshot-rollback
+mnamer-daemon-watch-lifecycle
+ink-grid-box-layout
+meriyah-explicit-resource-declarations
+fastapi-implicit-head-options
+arktype-json-schema-refs-dependencies
+expr-try-catch-errors
+obsidian-linter-auto-table-of-contents
+dateutil-rfc5545-timezone-interop
+oxvg-structural-selector-preservation
+bandit-interprocedural-taint-checks
+termenv-preserve-ansi-resets
+koota-query-predicates
+awilix-async-container-initialization
+kea-atomic-signal-selectors
+textual-kitty-key-phases
+optique-conditional-option-dependencies
+helm-unified-manifest-stream
+bandit-structured-nosec-directives
+abs-stepped-slices
+csstree-shorthand-expansion-compression
