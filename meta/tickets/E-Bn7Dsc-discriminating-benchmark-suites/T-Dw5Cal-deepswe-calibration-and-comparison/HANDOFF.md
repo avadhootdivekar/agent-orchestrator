@@ -3,7 +3,7 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-12 18:40 UTC (Claude, manager)
+- Last updated: 2026-11-12 18:53 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
 ## Owner rules in force
@@ -20,14 +20,14 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - `--refresh-host-login` triggers the refresh once the token has expired and the pool is idle.
 
 ## State now
-- Spend so far: about **$167.43 of $500**, about $333 left.
+- Spend so far: about **$172.20 of $500**, about $328 left.
 
   | Item | Amount |
   |---|---|
   | Phase 0/1 | $33.06 |
   | Round 1, plain | $11.15 |
   | Round 1, ao (13 of 13 tasks, done) | $61.66 |
-  | Calibration 1e (78 of 91 tasks) | $61.56 |
+  | Calibration 1e (84 of 91 tasks) | $66.33 |
   
 - Finplan run `o-1eyd60-ux-focused-parallel` **finished** at about 13:17 UTC: 30 waves, then closeout. Its
   `final/` has closeout, verify and push reports.
@@ -42,7 +42,7 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - plain `prometheus-typed-label-sorting`: solved 17/17, $0.40.
   - plain `psd-tools-blend-range-api`: solved 45/45, $0.45.
   - No token in the job dirs; the secrets dir is empty.
-- Calibration 1e: 13 tasks left (2 in flight). So far 56 solved and 22 failed.
+- Calibration 1e: 7 tasks left (2 in flight). So far 60 solved and 24 failed.
   - The `optique-conditional-option-dependencies` retry ran and failed 35/36. Its first attempt had hit the ECR
     rate limit ($0) and is archived as `.infra-1`.
 - ao round 1: grading 7 done, **ao 1/7 vs fresh plain 2/7**. ao failed obsidian with the same 2 hidden tests as plain (58/60, $3.76). Regression tasks so far:
@@ -81,7 +81,7 @@ ps -eo pid,args | grep -E '[b]udgeted.py'  # both drivers alive?
 |---|---|---|---|
 | 1 | Round 1, plain fresh, 13 tasks | **done**: 7/13 solved; 3 verdicts flipped vs Phase 1 | $11.15 of $30 |
 | 2 | Round 1, ao, 13 tasks | **done**: grading 1/7, regression 4/6. Plain was better on 2 tasks, ao on none, 11 ties | $61.66 of $104 |
-| 3 | Calibration 1e, plain, 91 tasks | 78/91 done (56 solved); running | $61.56 of $90 |
+| 3 | Calibration 1e, plain, 91 tasks | 84/91 done (60 solved); running | $66.33 of $90 |
 | 4 | Rebuild sets over all 113 tasks (`sets/build_sets.py` on p1a, p1c-\*, p1e-\*) | after step 3 | $0 |
 | 5 | Round 2: new grading tasks, both arms, 1 attempt each | after step 4 | reserve |
 | 6 | Round 3: more attempts on grading tasks, in seeded order, until $500 | after step 5 | rest |
@@ -93,6 +93,7 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 18:53 UTC: calibration 84/91 (60 solved, 24 failed); spend $172.20. The ao lane is idle until round 2.
 - 18:40 UTC: **round 1 complete.** `compare.py` (time rule; no time fails):
   | Arm | Solved | $/attempt | Median min |
   |---|---|---|---|
