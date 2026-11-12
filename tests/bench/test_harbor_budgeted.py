@@ -182,3 +182,68 @@ def test_high_load_holds_launches(tmp_path: Path) -> None:
         proc.kill()
         stdout, _ = proc.communicate(timeout=10)
     assert "[wait-load]" in stdout
+
+
+def test_hold_while_command_holds_until_it_fails(tmp_path: Path) -> None:
+    env = _setup(tmp_path, ["t"], token_hours=8)
+    flag = tmp_path / "co-tenant-running"
+    flag.touch()
+    proc = subprocess.Popen(
+        _cmd(tmp_path, "--hold-while", f"test -e {flag}"),
+        env=env,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        time.sleep(1.0)
+        assert proc.poll() is None, "driver must wait for the co-tenant"
+        assert not (Path(env["AO_HARBOR_ROOT"]) / "argv.log").exists()
+        flag.unlink()  # the co-tenant run finished
+        stdout, _ = proc.communicate(timeout=30)
+    finally:
+        proc.kill()
+    assert stdout.count("[wait-hold]") == 1
+    assert "[done] t" in stdout
+
+
+def _finished_trial(trial: Path, cost: float, reward: int) -> None:
+    trial.mkdir()
+    doc = {"agent_result": {"cost_usd": cost}, "verifier_result": {"rewards": {"reward": reward}}}
+    (trial / "result.json").write_text(json.dumps(doc))
+
+
+def test_restart_defers_in_flight_and_counts_late_results(tmp_path: Path) -> None:
+    """A stopped driver left trials running; the new one neither duplicates nor reruns them."""
+    env = _setup(tmp_path, ["running", "finished", "killed"], token_hours=8)
+    root = Path(env["AO_HARBOR_ROOT"])
+    for task in ("running", "finished", "killed"):
+        (root / "jobs" / f"p-{task}").mkdir()  # job dirs without a result yet
+    secrets = root / "secrets"
+    secrets.mkdir()
+    login = secrets / "p-running.env"
+    login.touch()  # its run.sh is still running
+    flag = tmp_path / "hold"
+    flag.touch()
+    cmd = _cmd(tmp_path, "--hold-while", f"test -e {flag}", "--retry-delay", "0.5")
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, text=True)
+    try:
+        time.sleep(0.5)
+        # The orphaned "finished" trial writes its result while the driver is holding.
+        done = root / "jobs" / "p-finished" / "t1"
+        _finished_trial(done, cost=2.0, reward=0)
+        flag.unlink()
+        time.sleep(1.0)
+        assert proc.poll() is None, "must still wait for the running orphan"
+        # The orphan "running" finishes: result written, login file removed by its run.sh.
+        late = root / "jobs" / "p-running" / "t1"
+        _finished_trial(late, cost=1.5, reward=1)
+        login.unlink()
+        stdout, _ = proc.communicate(timeout=30)
+    finally:
+        proc.kill()
+    launched = (root / "argv.log").read_text()
+    assert "--include killed" in launched  # killed run (no result, no run.sh): archived, rerun
+    assert "--include running" not in launched and "--include finished" not in launched
+    assert (root / "jobs" / "p-killed.infra-1").is_dir()
+    assert "[wait-inflight] running" in stdout
+    assert "[end] total $4.00" in stdout  # 2.0 + 1.5 counted late + 0.5 for the rerun

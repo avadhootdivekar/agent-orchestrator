@@ -6,6 +6,8 @@
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-11-12 · Comment: `T-Dw5Cal` Harbor launches are held until the
+  finplan ao run finishes (owner ask). Spend is about $92 of $500. Live roadmap: the task's HANDOFF.md.
 - By: Claude · Role: manager · Date: 2026-11-12 · Comment: **`T-Dw5Cal` Phase 2 started.**
   - The owner added $400, so the task budget is $500 total.
   - ao gets generous wave/time limits and the same $8 cap as plain.

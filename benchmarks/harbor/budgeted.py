@@ -21,6 +21,10 @@ moved to `<job>.infra-<n>` and the task requeued after `--retry-delay` seconds, 
 `--infra-retries` times. This also applies on resume. `--max-load L` holds new launches
 while the host's 1-minute load average is above L (a shared host: Harbor's 30 s Docker
 network-control probe fails under heavy load, and a busy host also skews wall times).
+`--hold-while CMD` holds new launches while a shell command exits 0, e.g. `kill -0 <pid>`
+of a co-tenant run that must finish first. A driver can be stopped (SIGKILL) and restarted
+while trials run: a task whose run.sh is still running (its login env file exists) is
+deferred, and one that finished meanwhile is counted, not rerun.
 
 `--prune-solved-images DATASET_DIR`: after a task's job finishes with every trial solved,
 remove its Docker image (task.toml `docker_image`), so a long calibration pool does not
@@ -136,6 +140,17 @@ def archive_job(job: str) -> str | None:
     return dst.name
 
 
+def hold_active(cmd: str) -> bool:
+    """True while the `--hold-while` shell command exits 0 (it is run on every poll)."""
+    return subprocess.run(cmd, shell=True, capture_output=True).returncode == 0  # noqa: S602
+
+
+def job_in_flight(job: str) -> bool:
+    """A run.sh for this job is still running: its host-login env file exists (run.sh
+    deletes it on exit). Seen after a driver restart that left trials running."""
+    return (AO_HARBOR_ROOT / "secrets" / f"{job}.env").exists()
+
+
 def summarize(job: str) -> str:
     parts = []
     for t in job_trials(job):
@@ -176,6 +191,12 @@ def main() -> int:
     ap.add_argument("--infra-retries", type=int, default=3)
     ap.add_argument("--retry-delay", type=float, default=300.0, help="seconds")
     ap.add_argument("--max-load", type=float, help="hold launches above this 1-min loadavg")
+    ap.add_argument(
+        "--hold-while",
+        metavar="CMD",
+        help="hold launches while this shell command exits 0 (e.g. 'kill -0 <pid>' of a "
+        "co-tenant run that must finish first)",
+    )
     ap.add_argument("--run-sh", type=Path, default=RUN_SH, help=argparse.SUPPRESS)  # tests
     args = ap.parse_args()
 
@@ -201,6 +222,7 @@ def main() -> int:
     print(f"[start] {len(pending)} to run, spent so far ${spent:.2f}", flush=True)
     waiting_logged = False
     load_logged = False
+    hold_logged = False
 
     while pending or running:
         for task, proc in list(running.items()):
@@ -245,8 +267,12 @@ def main() -> int:
         if load_high and pending and not load_logged:
             print(f"[wait-load] 1-min load {load:.0f} > {args.max_load:g}", flush=True)
         load_logged = load_high
+        held = bool(pending) and args.hold_while is not None and hold_active(args.hold_while)
+        if held and not hold_logged:
+            print(f"[wait-hold] {args.hold_while!r} still true", flush=True)
+        hold_logged = held
         now = time.time()
-        while pending and len(running) < args.lanes and not token_short and not load_high:
+        while pending and len(running) < args.lanes and not (token_short or load_high or held):
             if spent + (len(running) + 1) * args.cap_usd > args.total_usd:
                 break
             ready = [t for t in pending if not_before.get(t, 0) <= now]
@@ -255,6 +281,19 @@ def main() -> int:
             task = ready[0]
             pending.remove(task)
             job = f"{args.prefix}-{task}"
+            if job_in_flight(job):  # left running by a stopped driver: wait for its result
+                pending.append(task)
+                not_before[task] = now + args.retry_delay
+                print(f"[wait-inflight] {task}: an earlier run.sh is still running", flush=True)
+                continue
+            late = job_trials(job)
+            if late and not free_infra_failure(late):
+                # A trial left running by a stopped driver finished after this one started.
+                spent += sum(trial_cost(t) for t in late)
+                print(f"[skip-done] {task}: {summarize(job)} (finished after start)", flush=True)
+                continue
+            if late or (AO_HARBOR_ROOT / "jobs" / job).exists():  # $0 infra fail or killed run
+                print(f"[infra-archive] {task}: {summarize(job)} -> {archive_job(job)}", flush=True)
             cmd = [
                 str(args.run_sh), "--arm", args.arm, "--model", args.model,
                 "--dataset", args.dataset, "--include", task, "-n", "1",

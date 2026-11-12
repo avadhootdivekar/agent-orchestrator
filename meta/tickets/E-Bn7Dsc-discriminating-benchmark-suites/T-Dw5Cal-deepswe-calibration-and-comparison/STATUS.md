@@ -2,10 +2,20 @@
 
 - ID: `T-Dw5Cal-deepswe-calibration-and-comparison`
 - Updated At: 2026-11-11
-- State: **In Progress**: Phase 0 and Phase 1 done. Phase 2 round 1 and Phase 1e (full calibration) running.
+- State: **In Progress**: Phase 0 and Phase 1 done. Phase 2 round 1 and Phase 1e (full calibration) are
+  holding until the finplan run finishes (live roadmap: HANDOFF.md).
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: avadhoot · Role: user · Date: 2026-11-12 · Comment: wait for the ao-runner-finplan run to finish its
+  waves. Check every 30 min, and retrigger the Harbor tasks once the run is done and the load is low. Keep the
+  ~$400 left in mind. Keep a live plan/roadmap so work stays grounded across restarts.
+- By: Claude · Role: manager · Date: 2026-11-12 · Comment: **Harbor launches held for finplan.**
+  - Both drivers were stopped; the 3 trials in flight were left to finish.
+  - `budgeted.py` gained `--hold-while CMD` and safe restarts: running trials are deferred, late results are
+    counted, killed jobs are archived and rerun.
+  - The drivers now hold until no finplan `ao run` is alive and the 1-min load is 16 or less.
+  - Live roadmap and resume steps: **HANDOFF.md**. Spend about $92 of $500.
 - By: avadhoot · Role: user · Date: 2026-11-12 · Comment:
   - $400 more for this whole task (calibration, runs, everything).
   - Give ao generous task/wave/time limits; costs stay the same for both arms.
