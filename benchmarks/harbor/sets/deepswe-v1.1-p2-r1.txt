@@ -1,0 +1,16 @@
+# T-Dw5Cal Phase 2 round 1 (pre-registered 2026-11-12): fresh attempts, both arms.
+# Grading set (plain Sonnet 5.5 failed once in calibration):
+yjs-map-conflict-detection
+bandit-incremental-cache-control
+sqlfmt-create-table-ddl-formatting
+pest-character-class-coalescing
+koota-deferred-mutation-buffer
+koota-pair-relation-tracking
+obsidian-linter-link-format-conversion
+# Regression sample: 2 solved tasks per language, random.Random(20261112).sample per language:
+go-critic-doc-link-checker
+pebble-durability-wait-apis
+fastapi-deprecation-response-headers
+kombu-virtual-queue-dead-lettering
+eicrud-keyset-pagination-cursor
+happy-dom-deterministic-intersectionobserver

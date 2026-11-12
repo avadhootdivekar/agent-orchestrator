@@ -6,11 +6,11 @@
   "template_params": {
     "run_budget_usd": "20",
     "task_budget_usd": "8",
-    "wave_size": "3",
-    "max_waves": "3",
+    "wave_size": "6",
+    "max_waves": "12",
     "final_push": "false",
     "python_bin": "ao-python",
-    "branch_policy": "LOCAL WORKSPACE-ONLY MODE (benchmark sandbox): the task directory is not a git repo and must stay that way. Make NO git changes of any kind: no git init, branch, commit, push, stash or reset. There is no branch to verify: write git-go-ahead.md stating 'no-git local workspace mode' and continue; do NOT abort because git is absent. All later stages likewise make no git changes."
+    "branch_policy": "LOCAL WORKSPACE-ONLY MODE (benchmark sandbox): make NO git changes of any kind in the task directory (no git init, branch, commit, push, stash or reset), whether or not it is a git repo; the benchmark harness captures the working tree itself after the run. There is no branch to verify: write git-go-ahead.md stating 'no-git local workspace mode' and continue; do NOT abort because git is absent or because the directory is on a detached or unusual branch. All later stages likewise make no git changes."
   },
   "prompt_file": "ao-overseer/prompt-harbor.md",
   "reposets": "ao-overseer/reposet.json",
