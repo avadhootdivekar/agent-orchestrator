@@ -3,7 +3,7 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-12 18:23 UTC (Claude, manager)
+- Last updated: 2026-11-12 18:40 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
 ## Owner rules in force
@@ -20,13 +20,13 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - `--refresh-host-login` triggers the refresh once the token has expired and the pool is idle.
 
 ## State now
-- Spend so far: about **$164.20 of $500**, about $336 left.
+- Spend so far: about **$167.43 of $500**, about $333 left.
 
   | Item | Amount |
   |---|---|
   | Phase 0/1 | $33.06 |
   | Round 1, plain | $11.15 |
-  | Round 1, ao (12 of 13 tasks) | $58.43 |
+  | Round 1, ao (13 of 13 tasks, done) | $61.66 |
   | Calibration 1e (78 of 91 tasks) | $61.56 |
   
 - Finplan run `o-1eyd60-ux-focused-parallel` **finished** at about 13:17 UTC: 30 waves, then closeout. Its
@@ -56,7 +56,8 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - fastapi solved ($3.38).
   - kombu solved ($3.18).
   - eicrud solved ($3.46).
-  - happy-dom (the last task) in flight.
+  - happy-dom failed 13/14, the same as plain.
+  - **The ao pool is done; the ao lane is idle until round 2.**
 
 ## How to check and resume
 ```bash
@@ -79,7 +80,7 @@ ps -eo pid,args | grep -E '[b]udgeted.py'  # both drivers alive?
 | # | Step | Status | Budget |
 |---|---|---|---|
 | 1 | Round 1, plain fresh, 13 tasks | **done**: 7/13 solved; 3 verdicts flipped vs Phase 1 | $11.15 of $30 |
-| 2 | Round 1, ao, 13 tasks | 12/13 done: grading 1/7 (yjs solved); regression 4/5 so far (pebble: build break) | $58.43 of $104 |
+| 2 | Round 1, ao, 13 tasks | **done**: grading 1/7, regression 4/6. Plain was better on 2 tasks, ao on none, 11 ties | $61.66 of $104 |
 | 3 | Calibration 1e, plain, 91 tasks | 78/91 done (56 solved); running | $61.56 of $90 |
 | 4 | Rebuild sets over all 113 tasks (`sets/build_sets.py` on p1a, p1c-\*, p1e-\*) | after step 3 | $0 |
 | 5 | Round 2: new grading tasks, both arms, 1 attempt each | after step 4 | reserve |
@@ -92,6 +93,13 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 18:40 UTC: **round 1 complete.** `compare.py` (time rule; no time fails):
+  | Arm | Solved | $/attempt | Median min |
+  |---|---|---|---|
+  | plain | 7/13 | $0.86 | 6.1 |
+  | ao | 5/13 | $4.74 | 19.8 |
+  - Paired: ao better on 0 tasks, plain better on 2 (bandit, pebble), 11 ties; sign test p 0.5.
+  - Report: scratchpad `r1-compare.json`. STATUS has the table.
 - 18:23 UTC: ao eicrud 1 (14/14, $3.46); happy-dom in flight. Calibration 78/91 (56 solved). Spend $164.20.
   Load 12.
 - 17:53 UTC: ao kombu 1 (76/76, $3.18); eicrud in flight. Calibration 72/91 (51 solved). Spend $156.41.

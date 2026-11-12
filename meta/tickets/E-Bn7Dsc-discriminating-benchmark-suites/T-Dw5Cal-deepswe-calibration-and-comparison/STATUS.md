@@ -7,6 +7,21 @@
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-11-12 · Comment: **Phase 2 round 1 done** (13 tasks, 1 fresh
+  attempt per arm). `compare.py` applied the time rule; nothing was a time fail.
+
+  | Arm | Solved | Grading | Regression | $ total | $/attempt | Median min |
+  |---|---|---|---|---|---|---|
+  | plain Sonnet 5.5 | 7/13 | 2/7 | 5/6 | $11.15 | $0.86 | 6.1 |
+  | ao + Sonnet 5.5 | 5/13 | 1/7 | 4/6 | $61.66 | $4.74 | 19.8 |
+
+  - Paired per task: ao was better on 0 tasks, plain on 2, and 11 tied (sign test p = 0.5). One attempt per arm
+    cannot separate the arms yet.
+  - Plain won on `bandit-incremental-cache-control` (ao 87/88) and `pebble-durability-wait-apis`.
+  - The pebble loss is structural. ao's own `batch_durable_test.go` held a helper that its other test file used.
+    The hidden `test.patch` replaces that file, so the package no longer builds: 0/59 f2p, 0/44 p2p, 95 min.
+  - ao costs 5.5x more and takes 3.2x longer per attempt.
+  - Round 2 (the new grading tasks from the full calibration) follows once calibration ends.
 - By: avadhoot · Role: user · Date: 2026-11-12 · Comment: wait for the ao-runner-finplan run to finish its
   waves. Check every 30 min, and retrigger the Harbor tasks once the run is done and the load is low. Keep the
   ~$400 left in mind. Keep a live plan/roadmap so work stays grounded across restarts.
