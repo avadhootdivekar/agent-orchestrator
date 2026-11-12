@@ -6,6 +6,23 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
 - Last updated: 2026-11-12 19:35 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
+## ALERT (2026-11-12 ~20:00 UTC): disk nearly full; a finplan build is paused; Harbor stopped
+- `/usr` (the Docker root and this repo) reached **99%, 6 GB free**.
+  - The cause: a finplan Claude session's `cargo test` (slot 0, `res-slot.sh` holder PID 336277) grew
+    `/usr/avadhoot/finplan-slot-target/cargo-0` from 54 to 109 GB in about 30 min, roughly 7 GB/min at the end.
+- To protect `finplan-dev1` (must stay up), I paused that build's whole process tree with **SIGSTOP**. Nothing was
+  killed. Disk growth stopped at once.
+  - Resume: `kill -CONT $(pstree -p 336277 | grep -oE '\([0-9]+\)' | tr -d '()')`.
+- Freed so far: 19 DeepSWE images of solved tasks, which can be pulled again. They gave little space back, because
+  the images share layers.
+- Round-2 drivers are stopped (SIGKILL by PID). The 2 ao trials in flight, `participle` and `gql`, keep running.
+- Plain round 2 so far: participle 0 (90/91), gql 0 (16/17), vulture 0 (23/24); $1.86.
+- **Owner decision needed:** resume or kill the finplan build, and what space to free. Candidates:
+  - slot `cargo-0` (109 GB; its holder is paused);
+  - about 62 GB of unused Docker volumes, probably leaked finplan test mongo volumes;
+  - `/usr/avadhoot/finplan-cargo-target` (14 GB).
+- Restart Harbor with `./p2r2-ao.sh` / `./p2r2-plain.sh` once `/usr` has 40 GB or more free. Resume is safe.
+
 ## Owner rules in force
 - Budget: **$500 total** for T-Dw5Cal (calibration, runs, everything). $8 cap per task, same for both arms.
 - ao gets generous limits: subject `wave_size 6`, `max_waves 12`, agent timeout x1.5.
