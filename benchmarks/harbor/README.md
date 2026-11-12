@@ -97,7 +97,7 @@ something should help one arm, it goes into the shared parity layer so it helps 
 
 | Identical in both arms | How |
 |---|---|
-| Task container, task files, verifier, wall-clock agent timeout | Harbor, same task list |
+| Task container, task files, verifier | Harbor, same task list |
 | Claude Code version | `--ak version=<host claude version>` (both install the same pinned CLI) |
 | Model | `-m`; in ao also `allowed_models` and `default_unit_model` pinned to it (overseer cannot pick another model per unit) |
 | Thinking effort | `--effort` (default `high`): `claude --effort` / `AO_THINKING_EFFORT` on every ao agent, plus `CLAUDE_CODE_EFFORT_LEVEL` env |
@@ -108,7 +108,7 @@ something should help one arm, it goes into the shared parity layer so it helps 
 | Permission mode, autocompact, output style, thinking display, max output tokens | Claude Code defaults in both (`bypassPermissions`; neither arm sets the others) |
 | Web tools / network | the dataset's own agent network policy, both arms. Public-network tasks (TB 2.1): web tools on (Claude Code default). Offline-agent tasks (DeepSWE: `[agent] network_mode = "no-network"`): Harbor disables web search (`--disallowedTools WebSearch,WebFetch` on the plain arm; the ao arm puts the same list into every agent of its uploaded `agents.json` at run start, since ao's sessions bypass Harbor's claude command), and only the inference host is allowlisted (`run.sh` passes `--allow-agent-host api.anthropic.com`, `AO_HARBOR_INFERENCE_HOST` to override; Harbor cannot infer it for an OAuth login and otherwise blocks every API call with ECONNRESET) |
 | Spend cap per benchmark task | `run.sh --budget-usd` (default 20): the plain arm's session gets `claude --max-budget-usd`, the whole ao run (all its sessions) `run_budget_usd`. ao's per-unit `task_budget_usd` (subject, 8) is internal pacing |
-| Wall-clock limit | the dataset's own agent timeout, both arms (leaderboard-comparable); ao's overhead counts against it |
+| Wall-clock limit | the dataset's own agent timeout by default, both arms (leaderboard-comparable); ao's overhead counts against it. T-Dw5Cal Phase 2 (owner, 2026-11-12): ao gets x1.5 (`budgeted.py --agent-timeout-mult 1.5`) and both arms are judged by the time rule in `compare.py`: a solve slower than max(other arm's median + 60 min, 2 x other arm's median) counts as failed |
 | Credentials | same env file |
 | Grading capture | after the agent finishes, any uncommitted change in the task's working dir (if it is a git work tree) is committed (`worktree_commit_command` in `ao_harbor/agent.py`, both arms). The shared wrapper forbids git changes, and DeepSWE grades `git diff <base> HEAD`: without this every uncommitted fix scores as an empty patch (seen: p1a sqlfmt, f2p 0/32 with a 0-byte `model.patch`) |
 
@@ -117,6 +117,7 @@ something should help one arm, it goes into the shared parity layer so it helps 
 | Sessions | plain: one `claude -p` session. ao: many sessions (intake, waves of units, checkpoints, final verify, closeout), plus the engine's run summarizer (fixed Haiku session, no Bash, no repo; runs on expensive/failed runs; its cost counts in ao's total; `harbor-parity` leaves it out) |
 | ao's orchestration instructions | overseer contract, stage instructions, role prompt templates (`agents.json`): ao's method |
 | Per-session turn caps | plain: none. ao: per-unit turn budgets (`medium` 30 / `high` 60) from the template |
+| ao run shape | `ao-overseer-harbor.json`: `wave_size 6`, `max_waves 12` (the overseer-runner defaults; owner: generous task/wave limits, the $ cap is what binds) |
 | Git | none in either arm: the shared wrapper prompt says local workspace-only mode, no git changes. The ao subject has `init_git: false` and a `branch_policy` telling overseer-runner's (LLM) git-branch-off stage to write its go-ahead without git; ao still spends one short session on that stage (deterministic no-git mode: T-Ng1Wsp) |
 
 
@@ -126,6 +127,10 @@ plugins, permission mode, output style, CLI version, auto memory); exit 3 on a m
 
 ## 4. Reading results
 
+- `compare.py --arm plain=GLOB --arm ao=GLOB [--sets SETS.json] --markdown`: the comparison report for
+  arms run as one job per task (`budgeted.py`), with several attempts per task. Applies the time rule
+  (above), per-arm Wilson intervals, and paired per-task statistics (sign test, bootstrap interval),
+  split by grading/regression set.
 - `summarize.py`: rates use attempted trials. An agent timeout counts as an attempt (reward 0);
   every other trial exception (image build, verifier timeout, API/auth error) is infra and
   excluded, listed in the last column. Read those trials before trusting a comparison.

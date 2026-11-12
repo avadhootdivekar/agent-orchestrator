@@ -6,6 +6,11 @@
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-11-12 · Comment: **`T-Dw5Cal` Phase 2 started.**
+  - The owner added $400, so the task budget is $500 total.
+  - ao gets generous wave/time limits and the same $8 cap as plain.
+  - Time rule: more than 1 h slower, or more than 2x slower on longer tasks, counts as a failure.
+  - Running now: round 1 (13 tasks, both arms) and the full 113-task Sonnet 5.5 calibration.
 - By: Claude · Role: manager · Date: 2026-11-11 · Comment: **`T-Dw5Cal` Phase 1 done** ($33.06 of $100).
   - Plain Sonnet 5.5 on 22 DeepSWE v1.1 tasks: 15 solved, 7 failed. All 7 failures are narrow (1-2 hidden
     tests).

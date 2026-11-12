@@ -6,7 +6,7 @@
 - Owner: Claude (manager) for avadhoot
 - Created: 2026-11-11
 - Last Updated: 2026-11-11
-- Status: In Progress (Phase 1 done; Phase 2 awaiting owner budget)
+- Status: In Progress (Phase 1 done; Phase 2 + Phase 1e running, $500 total budget)
 - Estimate: Phase 0-1 < 1 day; Phase 2-3 sized after Phase 1
 - Follows: `T-Hb3Adp-bench-harbor-external` (the Harbor harness this task uses)
 
@@ -77,8 +77,34 @@ Phase 1 outcome (2026-11-11, details in STATUS.md):
 - N was 20 (not 10-15): with `budgeted.py` the limit is enforced, so N was sized from the measured mean
   ($0.81/attempt) instead of the worst case.
 
-### Phase 2 - Comparison (budget proposed to the owner after Phase 1)
-Proposal (2026-11-11, from Phase 1 measurements):
+### Phase 2 - Comparison (owner decision 2026-11-12: +$400, so **$500 total** for this task)
+Owner decisions (2026-11-12):
+- Budget: $400 more for the whole task (calibration, runs, everything): **$500 total**, $33.06 already
+  spent in Phase 0-1.
+- ao gets generous task/wave/time limits; the spend cap stays the same for both arms ($8/task).
+  Implemented: ao subject `wave_size 6`, `max_waves 12` (the template defaults, was 3/3; this also
+  removes the T-Mw4Clo forced-closeout trap in practice); ao agent timeout x1.5 (DeepSWE 90 -> 135 min);
+  plain keeps the dataset's 90 min (its calibration condition).
+- **Time rule**: a solve counts as failed if it took more than max(other arm's median + 60 min,
+  2 x other arm's median) on the same task (short tasks: up to 1 h slower; long tasks: at most 2x).
+  `compare.py` applies it to both arms.
+- More/harder tasks welcome (DeepSWE, Marathon or others), run sequentially as compute allows.
+
+Plan (pre-registered 2026-11-12; pools run under `budgeted.py` hard limits):
+| Pool | Arm | Tasks | Attempts | Limit | Expected |
+|---|---|---|---|---|---|
+| 1e calibration | plain | the 91 not yet calibrated (`sets/deepswe-v1.1-calib-1e.txt`, seeded order) | 1 | $90 | ~$75 |
+| Round 1 | plain (fresh) | grading 7 + regression sample 6 (`sets/deepswe-v1.1-p2-r1.txt`) | 1 | $30 | ~$12 |
+| Round 1 | ao | same 13 | 1 | $104 | ~$60-80 |
+| Round 2 | both | the new grading tasks from 1e (fresh attempts) | 1 + 1 | from the reserve | ~$7/task |
+| Round 3 | both | extra attempts on grading tasks, seeded order, until the $500 total | 1 + 1 | rest | |
+- Regression sample: 2 solved tasks per language (Go, Python, TypeScript), `random.Random(20261112)`.
+- Solved 1e tasks get their image removed (`--prune-solved-images`); failed ones keep it for round 2.
+- Marathon: not started from this budget unless DeepSWE rounds 1-2 leave >= $100. Its tasks run 4-10 h
+  at 16-32 GB RAM each and a plain attempt likely costs tens of dollars, so one pilot pair would be an
+  anecdote, not a measurement. A larger DeepSWE grading set buys more statistical power per dollar.
+
+Earlier proposal (2026-11-11, from Phase 1 measurements; superseded by the plan above):
 - Tasks: the 7-task grading set plus 5 regression tasks (seeded, language-stratified). 12 tasks.
 - Attempts: 3 fresh attempts per task per arm, so 36 attempts per arm.
 - Expected cost:

@@ -2,11 +2,27 @@
 
 - ID: `T-Dw5Cal-deepswe-calibration-and-comparison`
 - Updated At: 2026-11-11
-- State: **In Progress**: Phase 0 and Phase 1 done. Waiting for the owner's Phase 2 budget and the max_waves
-  decision.
+- State: **In Progress**: Phase 0 and Phase 1 done. Phase 2 round 1 and Phase 1e (full calibration) running.
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: avadhoot · Role: user · Date: 2026-11-12 · Comment:
+  - $400 more for this whole task (calibration, runs, everything).
+  - Give ao generous task/wave/time limits; costs stay the same for both arms.
+  - Retries and task counts don't matter as long as it solves the problem reliably. Time does:
+    more than 1 h slower, or more than 2x slower on longer tasks, is a failure.
+  - Pick more and harder tasks (Marathon or others) as budget allows; run sequentially if compute
+    allows.
+- By: Claude · Role: manager · Date: 2026-11-12 · Comment: **Phase 2 started** (plan and limits in TASK.md
+  Phase 2).
+  - ao subject at the template defaults: `wave_size 6`, `max_waves 12` (was 3/3). ao agent timeout x1.5.
+    Same $8 cap both arms (5e53923).
+  - Time rule implemented in `benchmarks/harbor/compare.py` (f5aa592).
+  - `budgeted.py` now waits for enough host-login lifetime instead of losing a task, and prunes
+    solved tasks' images.
+  - Running: plain pool (round-1 fresh plain on 13 tasks, then the 91-task calibration) and an ao pool
+    (round 1, 13 tasks). 3 DeepSWE containers at most; `finplan-dev1` untouched.
+  - Marathon deferred unless >= $100 remains after DeepSWE rounds 1-2 (reason in TASK.md).
 - By: avadhoot · Role: user · Date: 2026-11-11 · Comment:
   - First pass on DeepSWE: build a solvable baseline (regression tests) and an unsolved set (grading).
   - Verify that the complete comparison works, then move to SWE-Marathon.
@@ -111,20 +127,14 @@ ao + Sonnet 5.5 (wheel 5626232, harbor subject), verification runs:
 - No `sk-ant-oat` string in any job dir or ao tarball; `/var/tmp/ao-harbor/secrets/` is empty.
 
 ## Risks / Blockers
-- **Owner decision before Phase 2: the max_waves trap (T-Mw4Clo, 5th occurrence).**
-  - The harbor subject's `max_waves=3` forces closeout after wave 3. If wave 3 was not a verify wave, OV-R14
-    rejects the closeout and the ao run fails (sqlfmt).
-  - The grade still counts (the repo is graded), but ao loses its final verify.
-  - Options: (a) fix T-Mw4Clo in ao (a forced closeout schedules a verify instead of failing) and pin the new
-    wheel; (b) raise `max_waves` in the harbor subject (spend stays bounded by the $8 cap).
+- The max_waves trap (T-Mw4Clo, 5th occurrence) is avoided in practice by `max_waves 12` (owner chose
+  generous limits, 2026-11-12). The ao defect itself stays open in E-Rr5Lnc.
 - The grading set may partly measure hidden-convention guessing (above), not difficulty.
 - Host memory is shared with other workspaces: keep DeepSWE at 2 lanes or fewer.
 - Public ECR rate-limits anonymous pulls: retry excluded tasks (`budgeted.py` resumes).
 
 ## Next actions
-1. Owner: Phase 2 budget and the max_waves decision (proposal in TASK.md Phase 2).
-2. Phase 2:
-   - grading set (7) + a stratified regression sample (5), fresh attempts, about 3 per task per arm;
-   - same cap, wheel, effort and prompt; `harbor-parity` on the first pair;
-   - `budgeted.py` with a hard total limit.
-3. Then Phase 3 (SWE-Marathon, CPU tasks).
+1. Round 1 (running): `harbor-parity` on the first ao/plain pair; check ao memory and timings.
+2. Phase 1e (running after round-1 plain): rebuild the sets file with all 113 tasks.
+3. Round 2 on the new grading tasks, then round 3 extra attempts until the $500 total.
+4. Report with `compare.py` (time rule applied). Marathon only if >= $100 remains.
