@@ -3,10 +3,10 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-12 19:35 UTC (Claude, manager)
+- Last updated: 2026-11-13 01:55 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
-## ALERT (2026-11-12 ~20:00 UTC): disk nearly full; a finplan build is paused; Harbor stopped
+## RESOLVED ALERT (2026-11-12 ~20:00 UTC; resolved by 2026-11-13 01:53 UTC): disk nearly full
 - `/usr` (the Docker root and this repo) reached **99%, 6 GB free**.
   - The cause: a finplan Claude session's `cargo test` (slot 0, `res-slot.sh` holder PID 336277) grew
     `/usr/avadhoot/finplan-slot-target/cargo-0` from 54 to 109 GB in about 30 min, roughly 7 GB/min at the end.
@@ -21,7 +21,10 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - slot `cargo-0` (109 GB; its holder is paused);
   - about 62 GB of unused Docker volumes, probably leaked finplan test mongo volumes;
   - `/usr/avadhoot/finplan-cargo-target` (14 GB).
-- Restart Harbor with `./p2r2-ao.sh` / `./p2r2-plain.sh` once `/usr` has 40 GB or more free. Resume is safe.
+- Resolution: by 01:53 UTC the paused build was gone (handled outside this session). `cargo-0` was 69 GB and `/usr`
+  had 75 GB free.
+  - Round-2 drivers restarted.
+  - `hold-finplan.sh` now also holds launches while `/usr` has less than 40 GB free.
 
 ## Owner rules in force
 - Budget: **$500 total** for T-Dw5Cal (calibration, runs, everything). $8 cap per task, same for both arms.
@@ -37,7 +40,7 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - `--refresh-host-login` triggers the refresh once the token has expired and the pool is idle.
 
 ## State now
-- Spend so far: about **$177.20 of $500**, about $323 left.
+- Spend so far: about **$191.06 of $500**, about $309 left.
 
   | Item | Amount |
   |---|---|
@@ -45,7 +48,7 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   | Round 1, plain | $11.15 |
   | Round 1, ao | $61.66 |
   | Calibration 1e (91 tasks, done) | $71.33 |
-  | Round 2 | running |
+  | Round 2 (ao 2, plain 3 tasks so far) | $13.86 |
 
 - **Round 2 is running** (started 2026-11-12 ~19:30 UTC).
   - Tasks: the 26 new grading tasks from the full calibration, in seeded order:
@@ -55,7 +58,8 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - plain: `p2r2-plain.sh` (log `p2r2-plain.out`, prefix `p2-r2-cc-sonnet`), 1 lane, limit $45. Expected about $26.
   - At most 3 DeepSWE containers. Both limits together still leave at least $108, which keeps the Marathon option
     open.
-  - Gate: `hold-finplan.sh` (any finplan `ao run`) and load <= 16. Login thresholds as above.
+  - Gate: `hold-finplan.sh` (any finplan `ao run`, or `/usr` < 40 GB free) and load <= 16. Login thresholds as
+    above.
 - **Calibration (113 tasks) done:** 80 solved and 33 failed, 0 excluded.
   - Sets file: `benchmarks/harbor/sets/deepswe-v1.1-sonnet-5.5.json`, built from p1a, p1c-\* and p1e-\* only.
     The comparison attempts are not used for selection.
@@ -107,6 +111,10 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 2026-11-13 01:53 UTC: disk alert resolved (75 GB free; the paused finplan build is gone). Added the disk guard
+  and restarted the round-2 drivers. They are holding on load (42, finplan builds).
+  - ao round 2 so far: gql 0 (16/17, $4.75), participle 0 (**2/91**, $7.25; plain got 90/91).
+  - Plain: participle 0, gql 0, vulture 0. Spend $191.06.
 - 19:20-19:35 UTC: **calibration done** ($71.33): 113 tasks, 80 solved and 33 failed. Sets rebuilt; no token
   leaks.
   - Disk was 95% full. Cleared idle finplan Rust slots 1 and 2 (65 GB) under their flock; now 89 GB free.
