@@ -3,7 +3,7 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-13 01:55 UTC (Claude, manager)
+- Last updated: 2026-11-13 02:25 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
 ## RESOLVED ALERT (2026-11-12 ~20:00 UTC; resolved by 2026-11-13 01:53 UTC): disk nearly full
@@ -111,6 +111,14 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 02:23 UTC: both arms running (`katex` in flight). `/usr` 83 GB free; load 3.
+  - **Finding:** ao's participle 2/91 is the **same failure mode as pebble**. ao wrote `analyze_test.go`, which
+    the hidden `test.patch` replaces. Its other test files then fail to build (`[build failed]`): f2p 2/91, while
+    p2p stays 153/153.
+  - ao patches touch 4-5 test files against plain's 1 (participle 5 vs 1, gql 4 vs 1).
+  - That makes 2 of ao's losses so far from test-file collisions with hidden tests: a systematic ao weakness on
+    hidden-test benchmarks. Candidate fix for ao-lean: give agent-written test files unique names, and never
+    depend on helpers in a file that a grader may replace.
 - 2026-11-13 01:53 UTC: disk alert resolved (75 GB free; the paused finplan build is gone). Added the disk guard
   and restarted the round-2 drivers. They are holding on load (42, finplan builds).
   - ao round 2 so far: gql 0 (16/17, $4.75), participle 0 (**2/91**, $7.25; plain got 90/91).
