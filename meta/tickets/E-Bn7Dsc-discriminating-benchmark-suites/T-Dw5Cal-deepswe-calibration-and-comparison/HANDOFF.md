@@ -3,7 +3,7 @@
 Read this first after a restart, a compaction or a new session. It holds the current state, what is running, how to
 resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has the dated history.
 
-- Last updated: 2026-11-13 02:53 UTC (Claude, manager)
+- Last updated: 2026-11-13 03:25 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
 ## RESOLVED ALERT (2026-11-12 ~20:00 UTC; resolved by 2026-11-13 01:53 UTC): disk nearly full
@@ -40,7 +40,7 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - `--refresh-host-login` triggers the refresh once the token has expired and the pool is idle.
 
 ## State now
-- Spend so far: about **$202.37 of $500**, about $298 left.
+- Spend so far: about **$214.59 of $500**, about $285 left.
 
   | Item | Amount |
   |---|---|
@@ -48,7 +48,7 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   | Round 1, plain | $11.15 |
   | Round 1, ao | $61.66 |
   | Calibration 1e (91 tasks, done) | $71.33 |
-  | Round 2 (ao 4, plain 6 tasks so far) | $25.17 |
+  | Round 2 (ao 7, plain 9 tasks so far) | $37.39 |
 
 - **Round 2 is running** (started 2026-11-12 ~19:30 UTC).
   - Tasks: the 26 new grading tasks from the full calibration, in seeded order:
@@ -111,6 +111,13 @@ Open owner decisions:
 - Optional `claude setup-token`: removes the host-login waits, but a leaked token stays valid for months.
 
 ## Check log (newest first)
+- 03:23 UTC: round 2 so far.
+  - ao 4/7 ($29.57): katex, koota-entity, mnamer, vulture solved; effect, gql, participle failed.
+  - Plain 3/9 ($7.82): katex, koota-entity, mnamer solved; effect, gql, ink, meriyah, participle, vulture failed.
+  - ao's effect 0/47 (plain 45/47) is not a file collision. The hidden suite crashed on import ("Cannot read
+    properties of undefined (reading 'annotations')"): ao's exported API shape differs from what the hidden test
+    expects. A genuine model failure.
+  - Spend $214.59.
 - 02:53 UTC: round 2 so far.
   - ao 2/4: katex 1, **vulture 1 (plain 0, 23/24): ao's first gain**; gql 0, participle 0. $20.19.
   - Plain 2/6: katex 1, koota-entity 1; effect 0, gql 0, participle 0, vulture 0. $4.98.
