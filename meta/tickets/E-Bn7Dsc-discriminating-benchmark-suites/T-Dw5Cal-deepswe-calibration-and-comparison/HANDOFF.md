@@ -26,6 +26,18 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   - Round-2 drivers restarted.
   - `hold-finplan.sh` now also holds launches while `/usr` has less than 40 GB free.
 
+## BUDGET RESET (owner, 2026-11-16): fresh $600 for the week; supersedes the $500 below
+- The $500 T-Dw5Cal budget is **closed**. New budget: **$600 for the whole benchmarking effort this week (all phases)**;
+  the owner can top it up. Spend is counted after a baseline of $288.75 cumulative Harbor spend (2026-11-16 ~11:16 IST);
+  trials in flight then are charged to the new budget when they finish. Ledger: workspace
+  `kb/ao-bench/data/budget.json` (add money with `python3 kb/tools/update_bench_kb.py --topup N --note "..."`); it is
+  shown on the KB page `/kb/ao-bench/`.
+- Running pools were NOT aborted. The ao DeepSWE pool keeps its own `--total-usd 170` limit (pool-level, counts its past
+  spend); plain Round 2 is finished.
+- Planned split (not enforced): finish ao DeepSWE pool $70; SWE-Marathon plain pilot on 2-3 CPU tasks $150; Marathon
+  comparison on 2-3 tasks $280; reserve $100. Round 3 (extra DeepSWE attempts) dropped; no ao-lean arm (owner).
+- Marathon needs a per-task cap far above $8 (est. $60-100) and a token plan for 4-10 h trials (host token lives ~8 h).
+
 ## Owner rules in force
 - Budget: **$500 total** for T-Dw5Cal (calibration, runs, everything). $8 cap per task, same for both arms.
 - ao gets generous limits: subject `wave_size 6`, `max_waves 12`, agent timeout x1.5.
