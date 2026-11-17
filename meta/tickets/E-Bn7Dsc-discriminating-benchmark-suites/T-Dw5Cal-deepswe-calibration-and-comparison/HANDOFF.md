@@ -15,7 +15,11 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   c23-complit-1, c99-scope-1, fwrapv-2). Agent finished by itself in 2h32m (not a timeout), $42.03, 241M input tokens. No token leak.
   Ran with agent timeout x0.75 (7.5 h) and the host token (8 h); no long-lived token was created.
 - Token trick: set `expiresAt` in ~/.claude/.credentials.json to the past, then one `claude -p` call refreshes it to 8 h.
-- Running: `kubernetes-rust-rewrite` plain (`marathon-plain4.sh`, `mar-p4-cc-sonnet`, cap $100). ao arm NOT started (needs owner go-ahead).
+- Marathon `kubernetes-rust-rewrite` (plain, `mar-p4-cc-sonnet`): reward 0 but **INFRA-CONFOUNDED, not a measured fail**: the verifier build hit
+  `No space left on device` + `ld ... Bus error` (container disk 20 GB; agent scratch cargo targets likely filled it), so 0 of 106 test
+  binaries were built. Agent 62 min, $35.21. Do not count as a model fail; consider a rerun with a disk guard.
+- Running: `biofabric-rust-rewrite` plain (`marathon-plain5.sh`, `mar-p5-cc-sonnet`, cap $100). ao arm NOT started (needs owner go-ahead).
+- Marathon spend so far ~$77.8 (0.58 + 42.03 + 35.21) of the $150 pilot allocation.
 
 ## 2026-11-17 UPDATE (Claude): DeepSWE verified final; Marathon plain pilot 1 queued
 - DeepSWE pools finished. `compare.py` over r1+r2 (39 tasks, 33 grading + 6 regression): **plain 16/39, ao 16/39**
