@@ -18,8 +18,12 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
 - Marathon `kubernetes-rust-rewrite` (plain, `mar-p4-cc-sonnet`): reward 0 but **INFRA-CONFOUNDED, not a measured fail**: the verifier build hit
   `No space left on device` + `ld ... Bus error` (cause UNKNOWN: containers have no storage quota, host had ~140 GB free; maybe a transient host disk spike or agent scratch; not verified), so 0 of 106 test
   binaries were built. Agent 62 min, $35.21. Do not count as a model fail; consider a rerun with a disk guard.
-- Running: `biofabric-rust-rewrite` plain (`marathon-plain5.sh`, `mar-p5-cc-sonnet`, cap $100). ao arm NOT started (needs owner go-ahead).
-- Marathon spend so far ~$77.8 (0.58 + 42.03 + 35.21) of the $150 pilot allocation.
+- Marathon `biofabric-rust-rewrite` (plain, `mar-p5-cc-sonnet`): reward 0 (binary), clean measurement: 402 passed / 6 failed
+  (hidden_tests: *_eda outputs differ; line counts match). Agent claimed all tests pass. 53 min, $19.25. No infra error, no token leak.
+- Marathon plain calibration done (4 tasks, ~$97.07 of the $150 pilot allocation): zstd solved; rust-c-compiler 891/894 fail;
+  biofabric 402/408 fail; kubernetes unmeasured (infra). Both measured failures are near-misses = candidate tasks for an ao arm.
+- NOT started: ao arm (est ~5x plain cost, i.e. ~$100-200+/task; needs owner go-ahead and a budget decision).
+- Marathon spend so far ~$97.07 (0.58 + 42.03 + 35.21 + 19.25).
 
 ## 2026-11-17 UPDATE (Claude): DeepSWE verified final; Marathon plain pilot 1 queued
 - DeepSWE pools finished. `compare.py` over r1+r2 (39 tasks, 33 grading + 6 regression): **plain 16/39, ao 16/39**
