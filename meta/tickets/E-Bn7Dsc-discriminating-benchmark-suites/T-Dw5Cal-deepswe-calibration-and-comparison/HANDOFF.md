@@ -16,7 +16,7 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   Ran with agent timeout x0.75 (7.5 h) and the host token (8 h); no long-lived token was created.
 - Token trick: set `expiresAt` in ~/.claude/.credentials.json to the past, then one `claude -p` call refreshes it to 8 h.
 - Marathon `kubernetes-rust-rewrite` (plain, `mar-p4-cc-sonnet`): reward 0 but **INFRA-CONFOUNDED, not a measured fail**: the verifier build hit
-  `No space left on device` + `ld ... Bus error` (container disk 20 GB; agent scratch cargo targets likely filled it), so 0 of 106 test
+  `No space left on device` + `ld ... Bus error` (cause UNKNOWN: containers have no storage quota, host had ~140 GB free; maybe a transient host disk spike or agent scratch; not verified), so 0 of 106 test
   binaries were built. Agent 62 min, $35.21. Do not count as a model fail; consider a rerun with a disk guard.
 - Running: `biofabric-rust-rewrite` plain (`marathon-plain5.sh`, `mar-p5-cc-sonnet`, cap $100). ao arm NOT started (needs owner go-ahead).
 - Marathon spend so far ~$77.8 (0.58 + 42.03 + 35.21) of the $150 pilot allocation.
