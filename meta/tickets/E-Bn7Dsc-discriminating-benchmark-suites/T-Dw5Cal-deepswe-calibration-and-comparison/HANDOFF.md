@@ -6,6 +6,17 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
 - Last updated: 2026-11-13 03:53 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
+## 2026-11-17 Marathon plain calibration (Claude)
+- Audit of DeepSWE (subagent, raw verifier files): logged numbers match; plain 16/39, ao 16/39. One false 0 in calibration
+  (plain vulture p1e: tests all passed, parametrize ids renamed) -> calibration really 81/113. ao pebble/obsidian-toc zeros are
+  grader-sensitive (test file collision / rule-name ids).
+- Marathon `zstd-decoder` (plain, `mar-p1-cc-sonnet`): reward 1, 3.7 min agent, $0.58 -> not a marathon task for Sonnet 5.5.
+- Marathon `rust-c-compiler` (plain, `mar-p3-cc-sonnet`): reward 0 (binary scoring), but 891/894 = 99.7% (gcc_dg held-out 3 fails:
+  c23-complit-1, c99-scope-1, fwrapv-2). Agent finished by itself in 2h32m (not a timeout), $42.03, 241M input tokens. No token leak.
+  Ran with agent timeout x0.75 (7.5 h) and the host token (8 h); no long-lived token was created.
+- Token trick: set `expiresAt` in ~/.claude/.credentials.json to the past, then one `claude -p` call refreshes it to 8 h.
+- Running: `kubernetes-rust-rewrite` plain (`marathon-plain4.sh`, `mar-p4-cc-sonnet`, cap $100). ao arm NOT started (needs owner go-ahead).
+
 ## 2026-11-17 UPDATE (Claude): DeepSWE verified final; Marathon plain pilot 1 queued
 - DeepSWE pools finished. `compare.py` over r1+r2 (39 tasks, 33 grading + 6 regression): **plain 16/39, ao 16/39**
   (0.41 each, Wilson 0.27-0.57); paired ao better 4, plain better 4, 31 ties (sign test p=1.0). Cost $/attempt: plain 0.88,
