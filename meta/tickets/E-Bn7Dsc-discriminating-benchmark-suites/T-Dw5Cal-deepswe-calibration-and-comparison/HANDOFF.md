@@ -6,6 +6,15 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
 - Last updated: 2026-11-13 03:53 UTC (Claude, manager)
 - Branch: `ad/enhancements-10nov` (in sync with origin, unmerged; keep committing here)
 
+## 2026-11-17 UPDATE (Claude): DeepSWE verified final; Marathon plain pilot 1 queued
+- DeepSWE pools finished. `compare.py` over r1+r2 (39 tasks, 33 grading + 6 regression): **plain 16/39, ao 16/39**
+  (0.41 each, Wilson 0.27-0.57); paired ao better 4, plain better 4, 31 ties (sign test p=1.0). Cost $/attempt: plain 0.88,
+  ao 4.61; median min 5.1 vs 21.7. Grading tasks were chosen because plain failed them in calibration, so ~40% is expected.
+  All counted jobs are clean (no exceptions, no empty patches); only archived `.infra-1` reruns lack results.
+- Marathon plain pilot 1: `/var/tmp/ao-harbor/pilot/marathon-plain1.sh` (log `marathon-plain1.out`, prefix
+  `mar-p1-cc-sonnet`), task `zstd-decoder` (5 h agent timeout), cap/total $60, 1 lane. It waits for the host token to
+  expire (~16:00 UTC) and refresh before launching (needs >= 6 h). ao arm only after the plain result and owner review.
+
 ## RESOLVED ALERT (2026-11-12 ~20:00 UTC; resolved by 2026-11-13 01:53 UTC): disk nearly full
 - `/usr` (the Docker root and this repo) reached **99%, 6 GB free**.
   - The cause: a finplan Claude session's `cargo test` (slot 0, `res-slot.sh` holder PID 336277) grew
