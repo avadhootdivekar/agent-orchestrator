@@ -25,6 +25,13 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
 - NOT started: ao arm (est ~5x plain cost, i.e. ~$100-200+/task; needs owner go-ahead and a budget decision).
 - Marathon spend so far ~$97.07 (0.58 + 42.03 + 35.21 + 19.25).
 
+## 2026-11-18 Marathon reruns (Claude; owner raised week budget to $1200, rule: 3 plain attempts per near-miss task, then ao on consistent fails)
+- biofabric-rust-rewrite plain: **0/3**, the same 6 hidden `*_eda` tests fail each time (402/408, 402/408, 404/410); $19.25 + $20.34 + $25.29; no infra
+  issue, no token leak. Deterministic gap, not flake (or a task defect: unverified).
+- Queue: `pilot/marathon-reruns.sh` (rust-c-compiler plain attempts 2 and 3 still running/queued, prefixes mar-r2/mar-r3-cc-sonnet).
+- Queued after it: `pilot/marathon-ao-bio.sh` = ao arm on biofabric, attempt 1 (`mar-a1-ao-sonnet`, AO_WHEEL_REF=5626232, timeout x0.75, cap/total $200).
+- Decision rule: if rust-c-compiler is also consistently failing on plain, add its ao attempt; if plain passes it, pick other Marathon tasks on plain.
+
 ## 2026-11-17 UPDATE (Claude): DeepSWE verified final; Marathon plain pilot 1 queued
 - DeepSWE pools finished. `compare.py` over r1+r2 (39 tasks, 33 grading + 6 regression): **plain 16/39, ao 16/39**
   (0.41 each, Wilson 0.27-0.57); paired ao better 4, plain better 4, 31 ties (sign test p=1.0). Cost $/attempt: plain 0.88,
