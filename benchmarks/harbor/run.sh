@@ -186,6 +186,10 @@ case "$arm" in
     fi
     args+=(-a ao_harbor.agent:AoAgent --ak "ao_subject=$subject")
     [ -n "$wheel" ] && args+=(--ak "ao_wheel=$wheel")  # empty only on --dry-run
+    # ao-only orchestration limit (AO_MAX_TURNS per claude call); plain has no turn cap.
+    [ -n "${AO_BENCH_MAX_TURNS:-}" ] && args+=(--ak "max_turns=$AO_BENCH_MAX_TURNS")
+    # ao-only: how many independent ready units run at once (default 1 = serial).
+    [ -n "${AO_BENCH_MAX_PARALLEL:-}" ] && args+=(--ae "AO_MAX_PARALLEL=$AO_BENCH_MAX_PARALLEL")
     ;;
   *) die "--arm must be cc or ao" ;;
 esac

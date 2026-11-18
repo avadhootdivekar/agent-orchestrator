@@ -32,6 +32,24 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
   (c23-complit-1 and pr87054 in some). Binary scoring, so near misses give reward 0. No infra issue, no token leak.
 - Queue now: `pilot/marathon-ao-bio.sh` (ao biofabric, cap $250 -> actually $200) then `pilot/marathon-ao-rcc.sh` (ao rust-c-compiler, cap/total $250), prefix `mar-a1-ao-sonnet`.
   Plain spend on these two tasks: ~$198 total.
+- **ao biofabric, config 1** (turns 60 = `turn_budget: high`, waves of 6, max_waves 12, `max_parallel` 1 = serial; prefix `mar-a1`): reward 0, 384/451 passed
+  (67 failed), $22.27, 96 min. Cause: the pipeline stopped early. Unit `w02-05-foundation-fidelity-audit` hit the 60-turn cap on all 3 attempts, the
+  run was marked failed, and wave 3 (alignment layout, runners, CLI `align`) never ran, so those paths stayed `todo!()`. Not a test defect.
+  ao had never been given the turn headroom plain has (plain: no turn cap).
+- Incident: `marathon-ao-bio.sh` sat idle 10:02-10:27 UTC because its `pgrep -f` wait matched a leftover shell wrapper. Fixed (no pgrep; `kill -0 <pid>`).
+- ao rust-c-compiler (config 1) was aborted ~12:19 UTC after ~10 min (no result) so it would not hit the same cap.
+- **ao limits changed for the rerun (ao-only; plain has no equivalent, so parity is unaffected):** `AO_BENCH_MAX_TURNS=500` (run.sh, `--ak max_turns`),
+  `AO_BENCH_MAX_PARALLEL=6` (`--ae AO_MAX_PARALLEL`), subject `ao-overseer-harbor.json`: `max_waves 15`, `wave_size 12`, `task_budget_usd 10`,
+  `max_injected_tasks 300` (needed: the template's OV-CFG-3 rejects 160 < 198; one launch died at intake on it, $0.08).
+- **ao biofabric, config 2** (prefix `mar-a4`): reward 0, 534/567 passed (33 failed), **$68.33, 4 h 16 min**, 10 waves, 60 attempts, status succeeded.
+  Failures: the same 6 hidden `*_eda` tests plain fails, plus 27 ao-authored inline lib tests (`layout::*::tests::golden_*`, `alignment::layout::tests::*_matches_golden`)
+  that panic `NotFound` at `crates/core/src/layout/default.rs:1011` (they read `../../tests/parity/goldens`, which is apparently absent in the verifier run; likely, not proven: agent source not archived).
+  So on hidden tests ao == plain; binary reward 0 comes from ao's own extra tests. ao cost ~3x plain, time ~4x.
+- Intervention (disclose when comparing): at 14:30 UTC I killed one orphaned background `until` loop in unit `w04-02-verify-diff-layouts` (the agent waited for Java result files that could not appear;
+  its transcript had ended; ao has no unit timeout, so the run would have hung). Unit then succeeded immediately.
+- ao product gaps seen: no default per-unit timeout/idle kill; one capped audit unit can sink the whole run (no skip-to-next-wave).
+- Next: both arms fail the same 6 hidden tests, so biofabric does not separate them. Per owner rule, pick other CPU Marathon tasks for plain
+  (nextjs-vite-rewrite, kubernetes-rust-rewrite with disk check, slack-clone, mastodon-clone, ...), find consistent plain fails, then run ao with config 2.
 
 ## 2026-11-17 UPDATE (Claude): DeepSWE verified final; Marathon plain pilot 1 queued
 - DeepSWE pools finished. `compare.py` over r1+r2 (39 tasks, 33 grading + 6 regression): **plain 16/39, ao 16/39**
