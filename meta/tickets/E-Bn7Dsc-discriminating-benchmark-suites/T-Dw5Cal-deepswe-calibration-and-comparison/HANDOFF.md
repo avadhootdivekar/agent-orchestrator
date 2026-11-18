@@ -28,9 +28,10 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
 ## 2026-11-18 Marathon reruns (Claude; owner raised week budget to $1200, rule: 3 plain attempts per near-miss task, then ao on consistent fails)
 - biofabric-rust-rewrite plain: **0/3**, the same 6 hidden `*_eda` tests fail each time (402/408, 402/408, 404/410); $19.25 + $20.34 + $25.29; no infra
   issue, no token leak. Deterministic gap, not flake (or a task defect: unverified).
-- Queue: `pilot/marathon-reruns.sh` (rust-c-compiler plain attempts 2 and 3 still running/queued, prefixes mar-r2/mar-r3-cc-sonnet).
-- Queued after it: `pilot/marathon-ao-bio.sh` = ao arm on biofabric, attempt 1 (`mar-a1-ao-sonnet`, AO_WHEEL_REF=5626232, timeout x0.75, cap/total $200).
-- Decision rule: if rust-c-compiler is also consistently failing on plain, add its ao attempt; if plain passes it, pick other Marathon tasks on plain.
+- **rust-c-compiler plain: 0/3** (891, 892, 890 of 894; $42.03 + $39.27 + $52.54). Only held-out gcc_dg tests fail; `c99-scope-1` and `fwrapv-2` fail every time
+  (c23-complit-1 and pr87054 in some). Binary scoring, so near misses give reward 0. No infra issue, no token leak.
+- Queue now: `pilot/marathon-ao-bio.sh` (ao biofabric, cap $250 -> actually $200) then `pilot/marathon-ao-rcc.sh` (ao rust-c-compiler, cap/total $250), prefix `mar-a1-ao-sonnet`.
+  Plain spend on these two tasks: ~$198 total.
 
 ## 2026-11-17 UPDATE (Claude): DeepSWE verified final; Marathon plain pilot 1 queued
 - DeepSWE pools finished. `compare.py` over r1+r2 (39 tasks, 33 grading + 6 regression): **plain 16/39, ao 16/39**
