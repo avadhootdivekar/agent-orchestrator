@@ -51,6 +51,22 @@ resume, and the next steps. TASK.md has the pre-registered plan; STATUS.md has t
 - Next: both arms fail the same 6 hidden tests, so biofabric does not separate them. Per owner rule, pick other CPU Marathon tasks for plain
   (nextjs-vite-rewrite, kubernetes-rust-rewrite with disk check, slack-clone, mastodon-clone, ...), find consistent plain fails, then run ao with config 2.
 
+### 2026-11-19 ao rust-c-compiler (config 2) and hidden-test root cause (Claude)
+- **ao rust-c-compiler, config 2** (turns 500, waves 15x12, parallel 6, task $10, max_injected_tasks 300; job `mar-a5-ao-sonnet-rust-c-compiler`): reward 0,
+  887/894 (0.9922), $65.66, 6 h 07 min, status `timed_out` at the 21,600 s agent limit (0.75 x 8 h), 37 attempts. Failures: `c99-scope-1`, `fwrapv-2` (every
+  run, plain too), plus ao-only `ucnid-1`, `ucnid-14`, `pr87054`, `chapter_10/16_*_push_arg_on_page_boundary`. Plain: 891/892/890, $39-53, 131-181 min, finished itself.
+  Not checked: whether ao was still improving at the timeout (session logs not read).
+- **Biofabric hidden-test root cause (read from task files + failure output, agent code not archived, so unverified on the agent side):** the 6 failing hidden
+  `*_eda` tests differ only in shadow-link lines (`A shdw(P) B` vs `B shdw(P) A`; line counts equal). The agent writes `format_eda` in `runners.rs`; the hidden
+  suite ships its own `format_eda` printing shadow links as `target shdw source` from `LinkLayout.source/.target`. An agent that stores shadow links
+  swapped and compensates in its own formatter passes all visible tests and fails the hidden ones. Contract gap, not an algorithm bug; same for plain and ao.
+- **Scoreboard (Sonnet 5.5, ao vs plain):** DeepSWE verified 16/39 vs 16/39; biofabric 0 vs 0 (ao 534/567, $68, 4 h 16 vs plain 402/408, $20-25, ~1 h);
+  rust-c 0 vs 0 (ao 887, $66, 6 h vs plain ~891, $39-53, 2-3 h). ao: no pass-rate gain, ~1.5-3x cost, 2-4x time. Unproven, not disproven, for tasks where
+  plain fails loosely.
+- Owner decision 2026-11-19: stop here, record evidence. No runs in flight. Week spend roughly $210 of $1,200 since the 11-18 top-up.
+  Next if resumed: plain on other Marathon tasks (nextjs-vite-rewrite, slack-clone, mastodon-clone, kubernetes-rust-rewrite with disk check) to find
+  consistent plain failures; then ao on those. Re-read `kb/ao-bench/data/budget.json` first. Fix vulture entry in `sets/deepswe-v1.1-sonnet-5.5.json` (81/113).
+
 ## 2026-11-17 UPDATE (Claude): DeepSWE verified final; Marathon plain pilot 1 queued
 - DeepSWE pools finished. `compare.py` over r1+r2 (39 tasks, 33 grading + 6 regression): **plain 16/39, ao 16/39**
   (0.41 each, Wilson 0.27-0.57); paired ao better 4, plain better 4, 31 ties (sign test p=1.0). Cost $/attempt: plain 0.88,
